@@ -3,14 +3,16 @@ from quotexapi.stable_api import Quotex
 
 logger = logging.getLogger(__name__)
 
-def connect_and_list_assets(email: str, password: str, demo: bool):
+async def run(email: str, password: str, is_demo: bool):
     logger.info("Conectando à Quotex...")
-    client = Quotex(email, password, demo=demo)
-    try:
-        success = client.login()
-    except Exception:
-        return
+    client = Quotex(email, password)
+    result = await client.connect(is_demo)
+    if isinstance(result, tuple):
+        success, reason = result
+    else:
+        success, reason = result, None
     if not success:
+        logger.error(f"Falha no login: {reason}")
         return
-    assets = client.get_all_assets()
-    logger.info(f"Ativos ({len(assets)}): {assets}")
+    assets = await client.get_all_assets()
+    logger.info(f"Ativos disponíveis ({len(assets)}): {assets}")

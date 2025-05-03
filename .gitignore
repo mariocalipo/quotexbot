@@ -17,6 +17,7 @@ env/
 # OS files
 .DS_Store
 Thumbs.db
+session.json
 
 # Log files
 *.log
