@@ -1,7 +1,7 @@
 import ssl
 import logging
-from niquests import Session
-from niquests.adapters import HTTPAdapter
+from requests import Session
+from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from bs4 import BeautifulSoup
 

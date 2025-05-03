@@ -1,2 +1,5 @@
 websocket-client
 requests
+python-dotenv
+beautifulsoup4
+numpy

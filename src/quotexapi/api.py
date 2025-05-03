@@ -6,7 +6,7 @@ import json
 import ssl
 import asyncio
 import urllib3
-import niquests
+import requests
 import certifi
 import logging
 import platform
@@ -391,7 +391,7 @@ class QuotexAPI(object):
         )
         try:
             response.raise_for_status()
-        except niquests.exceptions.HTTPError:
+        except requests.exceptions.HTTPError:
             return None
         return response
 
