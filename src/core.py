@@ -6,7 +6,7 @@ logger = logging.getLogger(__name__)
 async def run(email: str, password: str, is_demo: bool):
     logger.info("Conectando à Quotex...")
     client = Quotex(email, password)
-    result = await client.connect(is_demo)
+    result = await client.connect()
     if isinstance(result, tuple):
         success, reason = result
     else:
