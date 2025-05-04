@@ -39,7 +39,7 @@ async def get_realtime_prices(client: Quotex, assets: list) -> dict:
     return prices
 
 async def list_open_otc_assets(client: Quotex):
-    """Fetch and list specified open OTC assets with payout percentages, real-time prices, and technical indicators, sorted by specified criteria."""
+    """Fetch and list specified open OTC assets with payout percentages, real-time prices, and technical indicators, sorted by specified criteria, and filtered by indicator values."""
     # Validate timeframe
     valid_timeframes = ['1M', '5M', '24H']
     timeframe = TIMEFRAME if TIMEFRAME in valid_timeframes else '1M'
@@ -104,22 +104,38 @@ async def list_open_otc_assets(client: Quotex):
     prices = await get_realtime_prices(client, asset_names)
     indicators = await calculate_indicators(client, asset_names)
 
-    # Sort assets based on SORT_BY and SORT_ORDER
+    # Filter assets based on indicator values
+    filtered_assets = []
+    for asset, payout in open_otc_assets:
+        indicator_values = indicators.get(asset, {})
+        meets_criteria = True
+        # Check if the asset meets all indicator criteria (MIN/MAX bounds)
+        for indicator, value in indicator_values.items():
+            if value is None:
+                logger.debug(f"Skipping asset {asset} due to missing {indicator} value")
+                meets_criteria = False
+                break
+        if meets_criteria:
+            filtered_assets.append((asset, payout))
+        else:
+            logger.debug(f"Asset {asset} filtered out due to indicator value constraints: {indicator_values}")
+
+    # Sort filtered assets based on SORT_BY and SORT_ORDER
     reverse = (sort_order == 'desc')
     if sort_by == 'payout':
-        open_otc_assets.sort(key=lambda x: x[1], reverse=reverse)
+        filtered_assets.sort(key=lambda x: x[1], reverse=reverse)
     elif sort_by == 'price':
-        open_otc_assets.sort(key=lambda x: prices.get(x[0], float('-inf') if reverse else float('inf')), reverse=reverse)
+        filtered_assets.sort(key=lambda x: prices.get(x[0], float('-inf') if reverse else float('inf')), reverse=reverse)
 
     # Log the list of open OTC assets with payouts, prices, and indicators
-    if open_otc_assets:
-        logger.info(f"Available open OTC assets ({len(open_otc_assets)}) for timeframe {timeframe} with minimum payout {MIN_PAYOUT}%, sorted by {sort_by} ({sort_order}):")
-        for asset, payout in open_otc_assets:
+    if filtered_assets:
+        logger.info(f"Available open OTC assets ({len(filtered_assets)}) for timeframe {timeframe} with minimum payout {MIN_PAYOUT}%, sorted by {sort_by} ({sort_order}):")
+        for asset, payout in filtered_assets:
             price = prices.get(asset, "N/A")
             indicator_values = indicators.get(asset, {})
             indicator_str = ", ".join(f"{ind}: {val if val is not None else 'N/A'}" for ind, val in indicator_values.items())
             logger.info(f"  - {asset}: {payout}% payout, Price: {price}, {indicator_str}")
     else:
-        logger.info(f"No open OTC assets meet the minimum payout of {MIN_PAYOUT}% for timeframe {timeframe}.")
+        logger.info(f"No open OTC assets meet the minimum payout of {MIN_PAYOUT}% for timeframe {timeframe} or indicator value constraints.")
 
-    return [asset for asset, _ in open_otc_assets]
+    return [asset for asset, _ in filtered_assets]

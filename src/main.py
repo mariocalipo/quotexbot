@@ -45,7 +45,7 @@ async def check_connection(client: Quotex) -> bool:
         logger.error(f"Connection check failed: {e}")
         return False
 
-async def reconnect(client: Quotex, max_attempts: int = 3) -> bool:
+async def reconnect(client: Quotex, max_attempts: int = 5) -> bool:
     """Attempt to reconnect the Quotex client with a limited number of retries."""
     attempt = 1
     while attempt <= max_attempts:
@@ -65,7 +65,7 @@ async def reconnect(client: Quotex, max_attempts: int = 3) -> bool:
                 logger.error("Maximum reconnection attempts reached.")
                 return False
             attempt += 1
-            await asyncio.sleep(5)
+            await asyncio.sleep(5)  # 5 seconds between reconnection attempts
     return False
 
 async def main():
@@ -81,11 +81,13 @@ async def main():
     logger.info("Initializing Quotex client...")
     client = Quotex(EMAIL, PASSWORD)
     client.demo_account = IS_DEMO
+    # Ensure the API's native 2FA prompt is enabled
+    client.totp_prompt = True  # Allow the API to prompt for 2FA
 
-    # Initial connection with timeout
+    # Initial connection with increased timeout
     try:
-        async with asyncio.timeout(10):
-            max_attempts = 3
+        async with asyncio.timeout(60):
+            max_attempts = 5
             attempt = 1
             while attempt <= max_attempts:
                 result = await client.connect()
