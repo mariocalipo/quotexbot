@@ -2,6 +2,7 @@ import logging
 import asyncio
 from quotexapi.stable_api import Quotex
 from settings import TIMEFRAME, MIN_PAYOUT, ASSETS, SORT_BY, SORT_ORDER
+from indicators import calculate_indicators
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,7 @@ async def get_realtime_prices(client: Quotex, assets: list) -> dict:
     return prices
 
 async def list_open_otc_assets(client: Quotex):
-    """Fetch and list specified open OTC assets with payout percentages and real-time prices, sorted by specified criteria."""
+    """Fetch and list specified open OTC assets with payout percentages, real-time prices, and technical indicators, sorted by specified criteria."""
     # Validate timeframe
     valid_timeframes = ['1M', '5M', '24H']
     timeframe = TIMEFRAME if TIMEFRAME in valid_timeframes else '1M'
@@ -98,9 +99,10 @@ async def list_open_otc_assets(client: Quotex):
         except Exception as e:
             logger.warning(f"Failed to check asset {asset}: {e}")
 
-    # Fetch real-time prices for open OTC assets
+    # Fetch real-time prices and indicators for open OTC assets
     asset_names = [asset for asset, _ in open_otc_assets]
     prices = await get_realtime_prices(client, asset_names)
+    indicators = await calculate_indicators(client, asset_names)
 
     # Sort assets based on SORT_BY and SORT_ORDER
     reverse = (sort_order == 'desc')
@@ -109,12 +111,14 @@ async def list_open_otc_assets(client: Quotex):
     elif sort_by == 'price':
         open_otc_assets.sort(key=lambda x: prices.get(x[0], float('-inf') if reverse else float('inf')), reverse=reverse)
 
-    # Log the list of open OTC assets with payouts and prices
+    # Log the list of open OTC assets with payouts, prices, and indicators
     if open_otc_assets:
         logger.info(f"Available open OTC assets ({len(open_otc_assets)}) for timeframe {timeframe} with minimum payout {MIN_PAYOUT}%, sorted by {sort_by} ({sort_order}):")
         for asset, payout in open_otc_assets:
             price = prices.get(asset, "N/A")
-            logger.info(f"  - {asset}: {payout}% payout, Price: {price}")
+            indicator_values = indicators.get(asset, {})
+            indicator_str = ", ".join(f"{ind}: {val if val is not None else 'N/A'}" for ind, val in indicator_values.items())
+            logger.info(f"  - {asset}: {payout}% payout, Price: {price}, {indicator_str}")
     else:
         logger.info(f"No open OTC assets meet the minimum payout of {MIN_PAYOUT}% for timeframe {timeframe}.")
 
