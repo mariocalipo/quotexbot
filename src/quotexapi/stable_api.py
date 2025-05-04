@@ -712,19 +712,72 @@ class Quotex:
             print(f"\rRestando {remaing_time if remaing_time > 0 else 0} segundos ...", end="")
             await asyncio.sleep(1)
 
-    async def check_win(self, id_number: int):
-        """Check win based id"""
-        task = asyncio.create_task(
-            self.start_remaing_time()
-        )
-        while True:
+    async def check_win(self, id_number: str):
+        """Check win status and result data for a given order ID.
+
+        Waits until the trade's game_state is 1 (finished) in the listinfodata.
+
+        Args:
+            id_number (str): The string ID of the trade to check.
+
+        Returns:
+            dict: A dictionary containing the trade result data if finished (game_state == 1),
+                  including 'win', 'profitAmount', etc. Returns None if the order ID
+                  is not found or result is not available/finished within the timeout.
+        """
+        logger.debug(f"check_win: Waiting for result for order ID: {id_number}")
+        # Set a reasonable timeout to avoid waiting forever
+        max_wait_time = 300  # Wait up to 300 seconds (5 minutes) - should be > TRADE_DURATION
+        start_time = time.time()
+
+        while time.time() - start_time < max_wait_time:
+            # Safely attempt to get the data dictionary for the order ID
             data_dict = self.api.listinfodata.get(id_number)
-            if data_dict and data_dict.get("game_state") == 1:
-                break
-            await asyncio.sleep(0.2)
-        task.cancel()
-        self.api.listinfodata.delete(id_number)
-        return data_dict["win"]
+
+            if data_dict and isinstance(data_dict, dict):
+                # Data found, check if it's the final state
+                game_state = data_dict.get("game_state")
+                logger.debug(f"check_win: Found data for {id_number}. game_state: {game_state}. Full data: {data_dict}") # Log the received data
+
+                if game_state == 1:  # Game State 1 usually means the trade is finished
+                    logger.debug(f"check_win: Order ID {id_number} is finished (game_state 1). Returning result data.")
+                    # The data_dict contains the result information
+                    # Attempt to remove it from listinfodata if possible to keep it clean
+                    try:
+                        # Use .pop() safely if listinfodata is a dictionary
+                        if hasattr(self.api.listinfodata, 'pop'):
+                             processed_data = self.api.listinfodata.pop(id_number, None)
+                             logger.debug(f"check_win: Successfully removed order ID {id_number} from listinfodata.")
+                        # If it's not a dict or pop fails, we can still return the data
+                    except Exception as e:
+                        logger.warning(f"check_win: Failed to remove order ID {id_number} from listinfodata: {e}. Proceeding.")
+
+                    # Return the data dictionary containing the result
+                    return data_dict
+                elif game_state is None:
+                     # Data found but game_state is missing - could be an issue or intermediate state
+                     logger.debug(f"check_win: Data found for {id_number} but game_state is None. Waiting.")
+                else:
+                     # Game state is not 1 (e.g., 0 for open/pending). Keep waiting.
+                     logger.debug(f"check_win: Order ID {id_number} not finished yet (game_state: {game_state}). Waiting.")
+            elif data_dict is False:
+                 # Handle the case where listinfodata.get(id_number) explicitly returns False
+                 # This might mean the ID was not found or an internal API issue
+                 logger.debug(f"check_win: listinfodata.get({id_number}) returned False. ID might not be in listinfodata yet or an error occurred. Waiting.")
+            elif data_dict is None:
+                 # Handle the case where listinfodata.get(id_number) returns None
+                 logger.debug(f"check_win: listinfodata.get({id_number}) returned None. ID might not be in listinfodata yet. Waiting.")
+            else:
+                 # Handle any other unexpected data type returned by listinfodata.get()
+                 logger.warning(f"check_win: Received unexpected data type for order ID {id_number} from listinfodata.get(): {type(data_dict)}. Data: {data_dict}. Waiting.")
+
+
+            await asyncio.sleep(0.5) # Wait for a short interval before checking again
+
+        # If the loop finishes without the trade result becoming available (timeout)
+        logger.warning(f"check_win: Timeout waiting for result (game_state 1) for order ID {id_number} after {max_wait_time} seconds.")
+        # Return None to indicate that the result could not be confirmed within the timeout
+        return None
 
     def start_candles_stream(self, asset: str = "EURUSD", period: int = 0):
         """Start streaming candle data for a specified asset.

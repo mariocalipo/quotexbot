@@ -71,60 +71,93 @@ async def execute_trades(client: Quotex, assets: list, indicators: dict):
         order_id = order.get('id')
         asset = order.get('asset')
         direction = order.get('direction')
-        amount = order.get('amount')
+        amount = order.get('amount') # Original trade amount
         openTimestamp = order.get('openTimestamp')
+        # Get percentProfit from the order details stored when placed
+        percent_profit = order.get('percentProfit', 0)
 
-        logger.debug(f"Checking status for order ID: {order_id} on {asset} (Opened at {openTimestamp})")
+        logger.debug(f"Checking status for order ID: {order_id} on {asset} (Opened at {openTimestamp}, Amount: {amount:.2f})")
 
         try:
+            # check_win should return the data_dict if game_state == 1, or None/False/unexpected otherwise
             result_data = await client.check_win(order_id)
 
             if result_data and isinstance(result_data, dict):
                 game_state = result_data.get("game_state")
 
-                if game_state == 1:
-                    win_status = result_data.get("win")
-                    profit_amount = float(result_data.get("profitAmount", 0.0))
+                if game_state == 1: # Order is finished
+                    # Get the raw 'win' status (True/False/None)
+                    win_status_raw = result_data.get("win")
+                    # Get the profitAmount from API, but we will recalculate profit/loss based on original amount and status
+                    api_profit_amount = result_data.get("profitAmount", 0.0)
                     close_price = result_data.get("closePrice", "N/A")
 
-                    logger.info(f"Order {order_id} ({asset} {direction}, {amount:.2f} USD) FINISHED. Status: {win_status}, P/L: {profit_amount:.2f} USD. Close Price: {close_price}")
-                    orders_to_remove.append(order)
+                    logger.debug(f"Order {order_id} raw data: {result_data}") # Log full raw data
 
-                    if win_status == "win":
-                        daily_loss -= profit_amount
+                    # --- Correct Interpretation of win_status and Profit/Loss ---
+                    profit_loss_amount = 0.0
+                    outcome_status = "Unknown" # To log the derived status
+
+                    if win_status_raw is True:
+                        # It's a win. Calculate actual profit.
+                        # Profit = Original Amount * (Percent Profit / 100)
+                        profit_loss_amount = amount * (percent_profit / 100.0)
+                        outcome_status = "WIN"
+                        daily_loss -= profit_loss_amount # Reduce daily loss by profit
                         consecutive_wins += 1
                         consecutive_losses = 0
+                        logger.info(f"Order {order_id} ({asset} {direction}, {amount:.2f} USD) FINISHED. Status: WIN. Profit: {profit_loss_amount:.2f} USD. Close Price: {close_price}. API P/L: {api_profit_amount:.2f}")
                         logger.debug(f"WIN recorded. Consecutive wins: {consecutive_wins}, Consecutive losses: {consecutive_losses}. Current daily loss: {daily_loss:.2f}")
 
-                    elif win_status == "lose":
-                        daily_loss += amount
+                    elif win_status_raw is False:
+                        # It's a loss. The loss is the original amount.
+                        profit_loss_amount = -amount # Represent loss as negative
+                        outcome_status = "LOSS"
+                        daily_loss += amount # Increase daily loss by the lost amount
                         consecutive_losses += 1
                         consecutive_wins = 0
+                        logger.info(f"Order {order_id} ({asset} {direction}, {amount:.2f} USD) FINISHED. Status: LOSS. Loss: {amount:.2f} USD. Close Price: {close_price}. API P/L: {api_profit_amount:.2f}")
                         logger.debug(f"LOSS recorded. Consecutive wins: {consecutive_wins}, Consecutive losses: {consecutive_losses}. Current daily loss: {daily_loss:.2f}")
 
-                    elif win_status == "draw":
-                         logger.info(f"Order {order_id} resulted in DRAW. Consecutive streaks unchanged.")
-                         pass
+                    elif win_status_raw is None and api_profit_amount == 0.0:
+                        # Could be a draw if profitAmount is also 0, or if API didn't specify win/loss but no profit
+                        # This is an assumption; exact draw handling depends on API specifics
+                        outcome_status = "DRAW"
+                        logger.info(f"Order {order_id} ({asset} {direction}, {amount:.2f} USD) FINISHED. Status: DRAW (assumed). P/L: {api_profit_amount:.2f} USD. Close Price: {close_price}")
+                        # Draw doesn't change consecutive counts or daily loss based on common practice
 
                     else:
-                         logger.warning(f"Order {order_id} ({asset}) finished with UNEXPECTED win_status: {win_status}. Data: {result_data}")
+                         # Handle unexpected win_status_raw values other than True/False/None
+                         logger.warning(f"Order {order_id} ({asset}) finished with UNEXPECTED raw win_status: {win_status_raw}. Data: {result_data}. Cannot reliably determine outcome.")
+                         # Treat as potential loss for risk management? Or just log?
+                         # For now, log and don't adjust daily_loss or streaks on uncertain outcome
+
+                    orders_to_remove.append(order) # Mark for removal ONLY if finished
 
                 else:
+                    # game_state is not 1, order is still open
                     logger.debug(f"Order {order_id} for {asset} is still OPEN (game_state: {game_state}). Keeping in list.")
 
             elif result_data is None:
+                 # check_win returned None (likely due to timeout or ID not found yet)
                  logger.debug(f"check_win for order ID {order_id} returned None. Order may still be processing or data temporarily unavailable. Keeping in list.")
 
+            elif result_data is False:
+                # check_win returned False (as seen in logs) - likely an error or ID not found
+                logger.warning(f"check_win for order ID {order_id} returned False. Order data might not be available or an API error occurred. Keeping in list temporarily.")
+
             else:
-                 logger.error(f"check_win for order ID {order_id} returned unexpected data type or error: {result_data}. Keeping in list temporarily.")
+                 # check_win returned something else unexpected (not dict, None, or False)
+                 logger.error(f"check_win for order ID {order_id} returned unexpected data type: {type(result_data)}. Data: {result_data}. Keeping in list temporarily.")
 
         except Exception as e:
-            logger.error(f"Error during check_win for order ID {order.get('id')}: {e}", exc_info=True)
-            logger.error(f"Removing order ID {order.get('id')} from open_orders list due to check_win error.")
+            logger.error(f"Error during check_win processing for order ID {order.get('id')}: {e}", exc_info=True)
+            # If an error occurs here during processing, log and remove to prevent blocking
+            logger.error(f"Removing order ID {order.get('id')} from open_orders due to processing error.")
             orders_to_remove.append(order)
 
 
-    for order in list(open_orders):
+    for order in list(open_orders): # Iterate over a copy
         if order in orders_to_remove:
             try:
                 open_orders.remove(order)
@@ -135,14 +168,22 @@ async def execute_trades(client: Quotex, assets: list, indicators: dict):
 
     # Adjust trade percentage based on consecutive wins/losses
     old_trade_percentage = current_trade_percentage
+    # Ensure consecutive thresholds are reasonable numbers
     if consecutive_losses >= CONSECUTIVE_LOSSES_THRESHOLD and current_trade_percentage > TRADE_PERCENTAGE_MIN:
+        # Reduce percentage, but not below min
+        # Example reduction: 20% of the current percentage
         current_trade_percentage = max(TRADE_PERCENTAGE_MIN, current_trade_percentage * 0.8)
         logger.debug(f"Reducing trade percentage due to {consecutive_losses} consecutive losses. New percentage: {current_trade_percentage:.2f}%")
     elif consecutive_wins >= CONSECUTIVE_WINS_THRESHOLD and current_trade_percentage < TRADE_PERCENTAGE_MAX:
+         # Increase percentage, but not above max
+         # Example increase: 20% of the current percentage
          current_trade_percentage = min(TRADE_PERCENTAGE_MAX, current_trade_percentage * 1.2)
          logger.debug(f"Increasing trade percentage due to {consecutive_wins} consecutive wins. New percentage: {current_trade_percentage:.2f}%")
     else:
-        current_trade_percentage = TRADE_PERCENTAGE
+        # If no streak threshold is met or streaks were just broken
+        # Reset to the base TRADE_PERCENTAGE unless already at an extreme min/max
+        current_trade_percentage = TRADE_PERCENTAGE # Base percentage from settings
+        # Ensure it's within min/max bounds after resetting to base
         current_trade_percentage = max(TRADE_PERCENTAGE_MIN, current_trade_percentage)
         current_trade_percentage = min(TRADE_PERCENTAGE_MAX, current_trade_percentage)
 
@@ -243,7 +284,7 @@ async def execute_trades(client: Quotex, assets: list, indicators: dict):
              else:
                   condition_reason = f"Criteria not met (RSI={rsi:.2f}, Price={current_price:.5f}, SMA={sma:.5f}, ATR={atr:.5f}, BUY_RSI={RSI_BUY_THRESHOLD}, SELL_RSI={RSI_SELL_THRESHOLD}, ATR_MAX={ATR_MAX})"
         else:
-             condition_reason = f"Indicator or price values are not numeric (RSI:{rsi}, Price={current_price}, SMA:{sma}, ATR:{atr})"
+             condition_reason = f"Indicator or price values are not numeric (RSI:{rsi}, Price:{current_price}, SMA:{sma}, ATR:{atr})"
              logger.warning(f"Non-numeric indicator/price values for {asset} during condition check: {condition_reason}")
 
 
@@ -253,10 +294,8 @@ async def execute_trades(client: Quotex, assets: list, indicators: dict):
 
         logger.info(f"Trade signal found for {asset}: {direction.upper()}. {condition_reason}")
 
-        # Calculate trade amount based on the CURRENT 'balance' variable
         if balance is None or not isinstance(balance, (int, float)) or balance <= 0:
              logger.error(f"Cannot calculate trade amount: Invalid or zero current balance ({balance}). Skipping trade for {asset}.")
-             # This could happen if balance somehow became invalid after fetching at function start and subsequent trades
              continue
 
         amount = (current_trade_percentage / 100) * balance
@@ -273,7 +312,6 @@ async def execute_trades(client: Quotex, assets: list, indicators: dict):
         duration = TRADE_DURATION
         time_mode = "TIME"
 
-        # --- Modified Log Here ---
         logger.info(f"Attempting to place {direction.upper()} order for {asset}: Amount={amount:.2f} USD (calculated based on balance {balance:.2f}), Duration={duration}s...")
 
 
@@ -294,11 +332,11 @@ async def execute_trades(client: Quotex, assets: list, indicators: dict):
                          'id': order_id,
                          'asset': asset,
                          'direction': direction,
-                         'amount': amount,
+                         'amount': amount, # Store original amount here
                          'openTimestamp': response.get('openTimestamp'),
                          'duration': duration,
-                         'percentProfit': response.get('percentProfit', 0),
-                         'percentLoss': response.get('percentLoss', 100)
+                         'percentProfit': response.get('percentProfit', 0), # Store percentProfit
+                         'percentLoss': response.get('percentLoss', 100) # Store percentLoss
                      }
                      open_orders.append(order_details)
                      logger.debug(f"Added order {order_id} to open_orders list. Current open_orders count: {len(open_orders)}")
@@ -314,7 +352,7 @@ async def execute_trades(client: Quotex, assets: list, indicators: dict):
                         balance = reported_balance
                         logger.debug(f"Balance variable updated after placing order {order_id}: New balance = {balance:.2f} USD (from API response)")
                      else:
-                        balance -= amount # Estimate
+                        balance -= amount # Estimate if API balance not available
                         logger.debug(f"Balance variable updated by estimating after placing order {order_id}: Estimated new balance = {balance:.2f} USD (API balance not in response)")
                      # --- End balance update ---
 
@@ -326,19 +364,20 @@ async def execute_trades(client: Quotex, assets: list, indicators: dict):
 
             else:
                 logger.error(f"Failed to place {direction.upper()} order for {asset}. Success status: {success}. Response: {response}")
-                # Consider adding cooldown on failure if appropriate
-                # last_trade_time[asset] = current_time # Optional: Apply cooldown on failure
+                # Optional: Apply cooldown on failure if appropriate
+                # last_trade_time[asset] = current_time
 
         except Exception as e:
             logger.error(f"Exception while trying to place {direction.upper()} trade for {asset}: {e}", exc_info=True)
             last_trade_time[asset] = current_time
 
 
+        # If you want to trade only ONE asset per cycle, uncomment the next line:
         # if trade_executed_in_this_cycle:
         #    logger.debug("Trade placed in this cycle. Stopping check for other assets.")
         #    break
 
-    # --- Modified Final Log ---
+    # Modified Final Log
     if trade_executed_in_this_cycle:
          logger.info(f"One or more new trades were executed in this cycle.")
     else:
