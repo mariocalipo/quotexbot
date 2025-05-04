@@ -4,6 +4,7 @@ import sys
 import asyncio
 from pathlib import Path
 from quotexapi.stable_api import Quotex
+from logging.handlers import RotatingFileHandler
 
 root = Path(__file__).parent
 sys.path.insert(0, str(root))
@@ -12,12 +13,28 @@ from settings import EMAIL, PASSWORD, IS_DEMO
 from assets import list_open_otc_assets
 
 def setup_logging():
-    """Configure logging format and level for the application."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
+    """Configure logging format and level for the application, with output to both console and file."""
+    # Create a logger
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)  # Set the logging level
+
+    # Define the log format
+    log_format = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+
+    # Console handler
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(log_format)
+    logger.addHandler(console_handler)
+
+    # File handler with rotation
+    log_file = root.parent / "quotexbot.log"  # Save log file in the project root directory
+    file_handler = RotatingFileHandler(
+        log_file,
+        maxBytes=5*1024*1024,  # 5 MB per file
+        backupCount=3  # Keep 3 backup files (quotexbot.log.1, quotexbot.log.2, quotexbot.log.3)
     )
+    file_handler.setFormatter(log_format)
+    logger.addHandler(file_handler)
 
 async def check_connection(client: Quotex) -> bool:
     """Verify if the Quotex client is still connected by checking account balance."""
