@@ -1,27 +1,39 @@
-import logging
-from logging.handlers import RotatingFileHandler
 import os
-from pathlib import Path
+from dotenv import load_dotenv, find_dotenv
 
-def setup_logging():
-    root_logger = logging.getLogger()
-    root_logger.setLevel(logging.INFO)
+# Carrega variáveis de ambiente (procura .env em pastas ascendentes)
+load_dotenv(find_dotenv())
 
-    fmt = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-    datefmt = "%Y-%m-%d %H:%M:%S"
-    formatter = logging.Formatter(fmt, datefmt)
+# Conexão com a conta Quotex
+EMAIL = os.getenv("EMAIL")
+PASSWORD = os.getenv("PASSWORD")
+if not EMAIL or not PASSWORD:
+    raise ValueError("As variáveis de ambiente EMAIL e PASSWORD devem estar definidas")
 
-    console_handler = logging.StreamHandler()
-    console_handler.setFormatter(formatter)
-    root_logger.addHandler(console_handler)
+# Ambiente: demo ou real
+IS_DEMO = os.getenv("IS_DEMO", "true").lower() in ("true", "1", "yes")
 
-    log_dir = Path(os.getenv("LOG_DIR", Path(__file__).parent.parent / "logs"))
-    log_dir.mkdir(parents=True, exist_ok=True)
+# Retry de conexão
+MAX_RETRIES = int(os.getenv("MAX_RETRIES", 5))
+INITIAL_BACKOFF = float(os.getenv("INITIAL_BACKOFF", 1.0))
 
-    file_handler = RotatingFileHandler(
-        filename=log_dir / "quotexbot.log",
-        maxBytes=int(os.getenv("LOG_MAX_BYTES", "10485760")),  # 10 MB
-        backupCount=int(os.getenv("LOG_BACKUP_COUNT", "5"))
-    )
-    file_handler.setFormatter(formatter)
-    root_logger.addHandler(file_handler)
+# Logging
+LOG_LEVEL        = os.getenv("LOG_LEVEL", "INFO").upper()
+LOG_DIR          = os.getenv("LOG_DIR", "logs")
+LOG_FILE         = os.getenv("LOG_FILE", os.path.join(LOG_DIR, "quotexbot.log"))
+LOG_MAX_BYTES    = int(os.getenv("LOG_MAX_BYTES", 10 * 1024 * 1024))
+LOG_BACKUP_COUNT = int(os.getenv("LOG_BACKUP_COUNT", 5))
+
+# Filtro de payout
+MIN_PAYOUT = float(os.getenv("MIN_PAYOUT", 80.0))  # em porcentagem
+
+# Gestão de risco
+RISK_PERCENT     = float(os.getenv("RISK_PERCENT", 1.0))   # % do saldo por trade
+MAX_TRADE_AMOUNT = int(os.getenv("MAX_TRADE_AMOUNT", 100)) # valor máximo por trade
+
+# Parâmetros de trade
+DURATION = int(os.getenv("DURATION", 60))  # segundos
+
+# WebSocket
+LANG     = os.getenv("LANG", "pt")
+DEBUG_WS = os.getenv("DEBUG_WS", "false").lower() in ("true", "1", "yes")

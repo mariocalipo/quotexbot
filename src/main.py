@@ -1,23 +1,18 @@
-#!/usr/bin/env python3
-import logging
-import sys
 import asyncio
-from pathlib import Path
+import sys
+import logging
+from core import QuotexBot
+import logging_config  # inicializa o logging
 
-root = Path(__file__).parent
-sys.path.insert(0, str(root))
-
-from settings import EMAIL, PASSWORD, IS_DEMO
-from logging_config import setup_logging
-from core import run
+logger = logging.getLogger(__name__)
 
 async def main():
-    setup_logging()
-    await run(EMAIL, PASSWORD, IS_DEMO)
+    bot = QuotexBot()
+    try:
+        await bot.run()
+    except Exception as e:
+        logger.exception("Erro não tratado: %s", e)
+        sys.exit(1)
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except Exception:
-        logging.getLogger().exception("Unhandled exception in main")
-        sys.exit(1)
+    asyncio.run(main())
