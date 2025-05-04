@@ -18,9 +18,11 @@ RSI_INDICATOR = os.getenv("RSI_INDICATOR", "true").lower() in ("true", "yes", "1
 RSI_PERIOD = int(os.getenv("RSI_PERIOD", "14"))  # Default: period=14
 RSI_MIN = float(os.getenv("RSI_MIN", "-inf"))    # Default: no minimum filter
 RSI_MAX = float(os.getenv("RSI_MAX", "inf"))     # Default: no maximum filter
+RSI_BUY_THRESHOLD = float(os.getenv("RSI_BUY_THRESHOLD", "35"))  # Buy if RSI < 35
+RSI_SELL_THRESHOLD = float(os.getenv("RSI_SELL_THRESHOLD", "65"))  # Sell if RSI > 65
 
 # SMA Configuration
-SMA_INDICATOR = os.getenv("SMA_INDICATOR", "false").lower() in ("true", "yes", "1")  # Disabled by default
+SMA_INDICATOR = os.getenv("SMA_INDICATOR", "true").lower() in ("true", "yes", "1")  # Enable SMA for trend confirmation
 SMA_PERIOD = int(os.getenv("SMA_PERIOD", "20"))  # Default: period=20
 SMA_MIN = float(os.getenv("SMA_MIN", "-inf"))    # Default: no minimum filter
 SMA_MAX = float(os.getenv("SMA_MAX", "inf"))     # Default: no maximum filter
@@ -32,14 +34,18 @@ EMA_MIN = float(os.getenv("EMA_MIN", "-inf"))    # Default: no minimum filter
 EMA_MAX = float(os.getenv("EMA_MAX", "inf"))     # Default: no maximum filter
 
 # ATR Configuration
-ATR_INDICATOR = os.getenv("ATR_INDICATOR", "false").lower() in ("true", "yes", "1")  # Disabled by default
+ATR_INDICATOR = os.getenv("ATR_INDICATOR", "true").lower() in ("true", "yes", "1")  # Enable ATR for volatility check
 ATR_PERIOD = int(os.getenv("ATR_PERIOD", "14"))  # Default: period=14
 ATR_MIN = float(os.getenv("ATR_MIN", "-inf"))    # Default: no minimum filter
-ATR_MAX = float(os.getenv("ATR_MAX", "inf"))     # Default: no maximum filter
+ATR_MAX = float(os.getenv("ATR_MAX", "0.05"))    # Default: max ATR for sell orders
 
 # Trading Configuration
 TRADE_ENABLED = os.getenv("TRADE_ENABLED", "false").lower() in ("true", "yes", "1")  # Disable trading by default
-TRADE_PERCENTAGE = float(os.getenv("TRADE_PERCENTAGE", "1"))  # Default: 1% of the balance per trade
-TRADE_DURATION = int(os.getenv("TRADE_DURATION", "120"))  # Default: 120 seconds (increased from 60)
-RSI_BUY_THRESHOLD = float(os.getenv("RSI_BUY_THRESHOLD", "30"))  # Buy if RSI < 30 (oversold)
-RSI_SELL_THRESHOLD = float(os.getenv("RSI_SELL_THRESHOLD", "70"))  # Sell if RSI > 70 (overbought)
+TRADE_PERCENTAGE = float(os.getenv("TRADE_PERCENTAGE", "5"))  # Default: 5% of the balance per trade
+TRADE_PERCENTAGE_MIN = float(os.getenv("TRADE_PERCENTAGE_MIN", "2"))  # Min: 2% after losses
+TRADE_PERCENTAGE_MAX = float(os.getenv("TRADE_PERCENTAGE_MAX", "5"))  # Max: 5% after wins
+TRADE_DURATION = int(os.getenv("TRADE_DURATION", "120"))  # Default: 120 seconds
+TRADE_COOLDOWN = int(os.getenv("TRADE_COOLDOWN", "300"))  # Default: 5 minutes (300 seconds) cooldown per asset
+DAILY_LOSS_LIMIT = float(os.getenv("DAILY_LOSS_LIMIT", "10"))  # Default: 10% daily loss limit
+CONSECUTIVE_LOSSES_THRESHOLD = int(os.getenv("CONSECUTIVE_LOSSES_THRESHOLD", "2"))  # Reduce risk after 2 consecutive losses
+CONSECUTIVE_WINS_THRESHOLD = int(os.getenv("CONSECUTIVE_WINS_THRESHOLD", "2"))  # Increase risk after 2 consecutive wins
