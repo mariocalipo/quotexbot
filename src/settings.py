@@ -36,3 +36,10 @@ ATR_INDICATOR = os.getenv("ATR_INDICATOR", "false").lower() in ("true", "yes", "
 ATR_PERIOD = int(os.getenv("ATR_PERIOD", "14"))  # Default: period=14
 ATR_MIN = float(os.getenv("ATR_MIN", "-inf"))    # Default: no minimum filter
 ATR_MAX = float(os.getenv("ATR_MAX", "inf"))     # Default: no maximum filter
+
+# Trading Configuration
+TRADE_ENABLED = os.getenv("TRADE_ENABLED", "false").lower() in ("true", "yes", "1")  # Disable trading by default
+TRADE_AMOUNT = float(os.getenv("TRADE_AMOUNT", "10"))  # Default: 10 USD per trade
+TRADE_DURATION = int(os.getenv("TRADE_DURATION", "60"))  # Default: 60 seconds
+RSI_BUY_THRESHOLD = float(os.getenv("RSI_BUY_THRESHOLD", "30"))  # Buy if RSI < 30 (oversold)
+RSI_SELL_THRESHOLD = float(os.getenv("RSI_SELL_THRESHOLD", "70"))  # Sell if RSI > 70 (overbought)

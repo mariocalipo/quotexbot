@@ -11,6 +11,8 @@ sys.path.insert(0, str(root))
 
 from settings import EMAIL, PASSWORD, IS_DEMO
 from assets import list_open_otc_assets
+from trade import execute_trades
+from indicators import calculate_indicators  
 
 def setup_logging():
     """Configure logging format and level for the application, with output to both console and file."""
@@ -69,7 +71,7 @@ async def reconnect(client: Quotex, max_attempts: int = 5) -> bool:
     return False
 
 async def main():
-    """Initialize the Quotex client, establish connection, display account balance, and list open OTC assets."""
+    """Initialize the Quotex client, establish connection, display account balance, list open OTC assets, and execute trades."""
     setup_logging()
     global logger
     logger = logging.getLogger(__name__)
@@ -119,11 +121,18 @@ async def main():
         logger.error(f"Failed to retrieve account balance: {e}")
         return
 
-    # List open OTC assets
-    await list_open_otc_assets(client)
-
-    # Monitor connection periodically
+    # Main loop: list assets, calculate indicators, and execute trades
     while True:
+        # List open OTC assets
+        open_assets = await list_open_otc_assets(client)
+        
+        # Fetch indicators for the listed assets
+        indicators = await calculate_indicators(client, open_assets)
+
+        # Execute trades based on indicators
+        await execute_trades(client, open_assets, indicators)
+
+        # Check connection status
         if not await check_connection(client):
             logger.warning("Connection lost. Attempting to reconnect...")
             if not await reconnect(client):
@@ -131,6 +140,8 @@ async def main():
                 return
         else:
             logger.debug("Connection is active.")
+
+        # Wait before the next iteration
         await asyncio.sleep(60)
 
 if __name__ == "__main__":
