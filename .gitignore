@@ -21,6 +21,7 @@ session.json
 
 # Log files
 *.log
+*.log.*
 
 # Environment config
 config.py
