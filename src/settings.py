@@ -24,7 +24,6 @@ def parse_timeframe(timeframe_str: str) -> int:
         elif timeframe_str.endswith('D'):
             return int(timeframe_str[:-1]) * 86400
         else:
-            # Default to 60 seconds if format is unknown
             logger.warning(f"Unknown TIMEFRAME format: {timeframe_str}. Using 60 seconds.")
             return 60
     except ValueError:
@@ -77,3 +76,4 @@ TRADE_COOLDOWN = int(os.getenv("TRADE_COOLDOWN", "300"))
 DAILY_LOSS_LIMIT = float(os.getenv("DAILY_LOSS_LIMIT", "10"))
 CONSECUTIVE_LOSSES_THRESHOLD = int(os.getenv("CONSECUTIVE_LOSSES_THRESHOLD", "2"))
 CONSECUTIVE_WINS_THRESHOLD = int(os.getenv("CONSECUTIVE_WINS_THRESHOLD", "2"))
+TRADE_MAX_AMOUNT = float(os.getenv("TRADE_MAX_AMOUNT", "5000.0")) 
