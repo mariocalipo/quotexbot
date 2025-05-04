@@ -39,7 +39,7 @@ ATR_MAX = float(os.getenv("ATR_MAX", "inf"))     # Default: no maximum filter
 
 # Trading Configuration
 TRADE_ENABLED = os.getenv("TRADE_ENABLED", "false").lower() in ("true", "yes", "1")  # Disable trading by default
-TRADE_AMOUNT = float(os.getenv("TRADE_AMOUNT", "10"))  # Default: 10 USD per trade
-TRADE_DURATION = int(os.getenv("TRADE_DURATION", "60"))  # Default: 60 seconds
+TRADE_PERCENTAGE = float(os.getenv("TRADE_PERCENTAGE", "1"))  # Default: 1% of the balance per trade
+TRADE_DURATION = int(os.getenv("TRADE_DURATION", "120"))  # Default: 120 seconds (increased from 60)
 RSI_BUY_THRESHOLD = float(os.getenv("RSI_BUY_THRESHOLD", "30"))  # Buy if RSI < 30 (oversold)
 RSI_SELL_THRESHOLD = float(os.getenv("RSI_SELL_THRESHOLD", "70"))  # Sell if RSI > 70 (overbought)
