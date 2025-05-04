@@ -16,26 +16,24 @@ from indicators import calculate_indicators
 
 def setup_logging():
     """Configure logging format and level for the application, with output to both console and file."""
-    # Create a logger
     logger = logging.getLogger()
-    logger.setLevel(logging.INFO)  # Set the logging level
+    logger.setLevel(logging.INFO)
 
-    # Define the log format
     log_format = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
 
-    # Console handler
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(log_format)
+    console_handler.setLevel(logging.INFO)  # Only show INFO and above on console
     logger.addHandler(console_handler)
 
-    # File handler with rotation
-    log_file = root.parent / "quotexbot.log"  # Save log file in the project root directory
+    log_file = root.parent / "quotexbot.log"
     file_handler = RotatingFileHandler(
         log_file,
-        maxBytes=5*1024*1024,  # 5 MB per file
-        backupCount=3  # Keep 3 backup files (quotexbot.log.1, quotexbot.log.2, quotexbot.log.3)
+        maxBytes=5*1024*1024,
+        backupCount=3
     )
     file_handler.setFormatter(log_format)
+    file_handler.setLevel(logging.DEBUG)  # Log DEBUG and above to file
     logger.addHandler(file_handler)
 
 async def check_connection(client: Quotex) -> bool:
@@ -67,7 +65,7 @@ async def reconnect(client: Quotex, max_attempts: int = 5) -> bool:
                 logger.error("Maximum reconnection attempts reached.")
                 return False
             attempt += 1
-            await asyncio.sleep(5)  # 5 seconds between reconnection attempts
+            await asyncio.sleep(5)
     return False
 
 async def main():
@@ -83,10 +81,8 @@ async def main():
     logger.info("Initializing Quotex client...")
     client = Quotex(EMAIL, PASSWORD)
     client.demo_account = IS_DEMO
-    # Ensure the API's native 2FA prompt is enabled
-    client.totp_prompt = True  # Allow the API to prompt for 2FA
+    client.totp_prompt = True
 
-    # Initial connection with increased timeout
     try:
         async with asyncio.timeout(60):
             max_attempts = 5
@@ -112,7 +108,6 @@ async def main():
         logger.error("Connection attempt timed out.")
         return
 
-    # Display account balance
     try:
         balance = await client.get_balance()
         account_type = "Demo" if IS_DEMO else "Real"
@@ -121,27 +116,15 @@ async def main():
         logger.error(f"Failed to retrieve account balance: {e}")
         return
 
-    # Main loop: list assets, calculate indicators, and execute trades
     while True:
-        # List open OTC assets
         open_assets = await list_open_otc_assets(client)
-        
-        # Fetch indicators for the listed assets
         indicators = await calculate_indicators(client, open_assets)
-
-        # Execute trades based on indicators
         await execute_trades(client, open_assets, indicators)
-
-        # Check connection status
         if not await check_connection(client):
             logger.warning("Connection lost. Attempting to reconnect...")
             if not await reconnect(client):
                 logger.error("Failed to reconnect. Exiting.")
                 return
-        else:
-            logger.debug("Connection is active.")
-
-        # Wait before the next iteration
         await asyncio.sleep(60)
 
 if __name__ == "__main__":
