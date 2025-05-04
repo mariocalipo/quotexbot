@@ -1,7 +1,7 @@
 import logging
 import asyncio
 from quotexapi.stable_api import Quotex
-from settings import TIMEFRAME, MIN_PAYOUT, ASSETS
+from settings import TIMEFRAME, MIN_PAYOUT, ASSETS, SORT_BY, SORT_ORDER
 
 logger = logging.getLogger(__name__)
 
@@ -38,12 +38,23 @@ async def get_realtime_prices(client: Quotex, assets: list) -> dict:
     return prices
 
 async def list_open_otc_assets(client: Quotex):
-    """Fetch and list specified open OTC assets with payout percentages and real-time prices meeting the minimum threshold."""
+    """Fetch and list specified open OTC assets with payout percentages and real-time prices, sorted by specified criteria."""
     # Validate timeframe
     valid_timeframes = ['1M', '5M', '24H']
     timeframe = TIMEFRAME if TIMEFRAME in valid_timeframes else '1M'
     if TIMEFRAME != timeframe:
         logger.warning(f"Invalid TIMEFRAME '{TIMEFRAME}' in .env. Using default '1M'.")
+
+    # Validate sort criteria
+    valid_sort_by = ['payout', 'price']
+    sort_by = SORT_BY if SORT_BY in valid_sort_by else 'payout'
+    if SORT_BY != sort_by:
+        logger.warning(f"Invalid SORT_BY '{SORT_BY}' in .env. Using default 'payout'.")
+    
+    valid_sort_order = ['asc', 'desc']
+    sort_order = SORT_ORDER if SORT_ORDER in valid_sort_order else 'desc'
+    if SORT_ORDER != sort_order:
+        logger.warning(f"Invalid SORT_ORDER '{SORT_ORDER}' in .env. Using default 'desc'.")
 
     # Ensure instruments are loaded
     while client.api.instruments is None:
@@ -91,9 +102,16 @@ async def list_open_otc_assets(client: Quotex):
     asset_names = [asset for asset, _ in open_otc_assets]
     prices = await get_realtime_prices(client, asset_names)
 
+    # Sort assets based on SORT_BY and SORT_ORDER
+    reverse = (sort_order == 'desc')
+    if sort_by == 'payout':
+        open_otc_assets.sort(key=lambda x: x[1], reverse=reverse)
+    elif sort_by == 'price':
+        open_otc_assets.sort(key=lambda x: prices.get(x[0], float('-inf') if reverse else float('inf')), reverse=reverse)
+
     # Log the list of open OTC assets with payouts and prices
     if open_otc_assets:
-        logger.info(f"Available open OTC assets ({len(open_otc_assets)}) for timeframe {timeframe} with minimum payout {MIN_PAYOUT}%:")
+        logger.info(f"Available open OTC assets ({len(open_otc_assets)}) for timeframe {timeframe} with minimum payout {MIN_PAYOUT}%, sorted by {sort_by} ({sort_order}):")
         for asset, payout in open_otc_assets:
             price = prices.get(asset, "N/A")
             logger.info(f"  - {asset}: {payout}% payout, Price: {price}")

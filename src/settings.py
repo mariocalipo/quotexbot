@@ -10,3 +10,5 @@ IS_DEMO = os.getenv("IS_DEMO", "true").lower() in ("1", "true", "yes")
 TIMEFRAME = os.getenv("TIMEFRAME", "1M").upper()  # Default to 1M
 MIN_PAYOUT = float(os.getenv("MIN_PAYOUT", "0"))  # Default to 0 (no filtering)
 ASSETS = os.getenv("ASSETS", "").split(",") if os.getenv("ASSETS") else []  # Default to empty list
+SORT_BY = os.getenv("SORT_BY", "payout").lower()  # Default to payout
+SORT_ORDER = os.getenv("SORT_ORDER", "desc").lower()  # Default to descending
