@@ -74,6 +74,11 @@ TRADE_PERCENTAGE_MAX = float(os.getenv("TRADE_PERCENTAGE_MAX", "5"))
 TRADE_DURATION = int(os.getenv("TRADE_DURATION", "120"))
 TRADE_COOLDOWN = int(os.getenv("TRADE_COOLDOWN", "300"))
 DAILY_LOSS_LIMIT = float(os.getenv("DAILY_LOSS_LIMIT", "10"))
+
+# Settings for dynamic trade percentage adjustment
 CONSECUTIVE_LOSSES_THRESHOLD = int(os.getenv("CONSECUTIVE_LOSSES_THRESHOLD", "2"))
 CONSECUTIVE_WINS_THRESHOLD = int(os.getenv("CONSECUTIVE_WINS_THRESHOLD", "2"))
-TRADE_MAX_AMOUNT = float(os.getenv("TRADE_MAX_AMOUNT", "5000.0")) 
+TRADE_PERCENTAGE_STEP = float(os.getenv("TRADE_PERCENTAGE_STEP", "0.5")) 
+
+TRADE_MAX_AMOUNT = float(os.getenv("TRADE_MAX_AMOUNT", "5000.0"))
+ORDER_PLACEMENT_DELAY = int(os.getenv("ORDER_PLACEMENT_DELAY", "2"))

@@ -6,7 +6,8 @@ from settings import (
     TRADE_ENABLED, TRADE_PERCENTAGE, TRADE_PERCENTAGE_MIN, TRADE_PERCENTAGE_MAX,
     TRADE_DURATION, RSI_BUY_THRESHOLD, RSI_SELL_THRESHOLD, ATR_MAX,
     TRADE_COOLDOWN, DAILY_LOSS_LIMIT, CONSECUTIVE_LOSSES_THRESHOLD,
-    CONSECUTIVE_WINS_THRESHOLD, TRADE_MAX_AMOUNT # Import the new setting
+    CONSECUTIVE_WINS_THRESHOLD, TRADE_MAX_AMOUNT, ORDER_PLACEMENT_DELAY,
+    TRADE_PERCENTAGE_STEP
 )
 
 logger = logging.getLogger(__name__)
@@ -22,17 +23,18 @@ current_trade_percentage = TRADE_PERCENTAGE
 
 async def execute_trades(client: Quotex, assets: list, indicators: dict):
     global daily_loss, initial_daily_balance, last_reset_time, consecutive_losses, consecutive_wins, current_trade_percentage
-    current_balance_at_start = None
+    current_balance_at_start_of_function = None
     try:
-        current_balance_at_start = await client.get_balance()
-        if current_balance_at_start is not None and isinstance(current_balance_at_start, (int, float)):
-             logger.debug(f"Current balance at start: {current_balance_at_start:.2f} USD")
+        current_balance_at_start_of_function = await client.get_balance()
+        if current_balance_at_start_of_function is not None and isinstance(current_balance_at_start_of_function, (int, float)):
+             logger.debug(f"Balance fetched at start of execute_trades: {current_balance_at_start_of_function:.2f} USD")
         else:
-             logger.warning(f"Could not retrieve valid initial balance.")
-             current_balance_at_start = 0.0
+             logger.warning(f"Could not retrieve valid initial balance at start of execute_trades.")
+             current_balance_at_start_of_function = 0.0
     except Exception as e:
-        logger.error(f"Failed to retrieve initial balance: {e}", exc_info=True)
-        current_balance_at_start = 0.0
+        logger.error(f"Failed to retrieve initial balance at start of execute_trades: {e}", exc_info=True)
+        current_balance_at_start_of_function = 0.0
+
 
     logger.debug(f"--- Entering execute_trades ---")
     logger.debug(f"Received assets: {assets}")
@@ -53,7 +55,7 @@ async def execute_trades(client: Quotex, assets: list, indicators: dict):
     if last_reset_time is None or (current_time - last_reset_time) >= 86400:
         logger.info("-" * 30)
         logger.info("Starting new trading day.")
-        initial_daily_balance = current_balance_at_start
+        initial_daily_balance = current_balance_at_start_of_function
         daily_loss = 0.0
         last_reset_time = current_time
         consecutive_losses = 0
@@ -86,6 +88,9 @@ async def execute_trades(client: Quotex, assets: list, indicators: dict):
                     profit_loss_amount = 0.0
                     outcome_status = "Unknown"
 
+                    old_wins = consecutive_wins
+                    old_losses = consecutive_losses
+
                     if win_status_raw is True:
                         profit_loss_amount = amount * (percent_profit / 100.0)
                         outcome_status = "WIN"
@@ -93,7 +98,8 @@ async def execute_trades(client: Quotex, assets: list, indicators: dict):
                         consecutive_wins += 1
                         consecutive_losses = 0
                         logger.info(f"Order {order_id} ({asset}, {amount:.2f} USD) FINISHED: WIN. Profit: {profit_loss_amount:.2f} USD. Close Price: {close_price}.")
-                        logger.debug(f"WIN. Wins: {consecutive_wins}, Losses: {consecutive_losses}. Daily loss: {daily_loss:.2f}")
+                        logger.debug(f"Outcome: WIN. Old Wins: {old_wins}, New Wins: {consecutive_wins}. Old Losses: {old_losses}, New Losses: {consecutive_losses}. Daily loss: {daily_loss:.2f}")
+
 
                     elif win_status_raw is False:
                         profit_loss_amount = -amount
@@ -102,11 +108,13 @@ async def execute_trades(client: Quotex, assets: list, indicators: dict):
                         consecutive_losses += 1
                         consecutive_wins = 0
                         logger.info(f"Order {order_id} ({asset}, {amount:.2f} USD) FINISHED: LOSS. Loss: {amount:.2f} USD. Close Price: {close_price}.")
-                        logger.debug(f"LOSS. Wins: {consecutive_wins}, Losses: {consecutive_losses}. Daily loss: {daily_loss:.2f}")
+                        logger.debug(f"Outcome: LOSS. Old Wins: {old_wins}, New Wins: {consecutive_wins}. Old Losses: {old_losses}, New Losses: {consecutive_losses}. Daily loss: {daily_loss:.2f}")
 
                     elif win_status_raw is None and api_profit_amount == 0.0:
                         outcome_status = "DRAW"
                         logger.info(f"Order {order_id} ({asset}, {amount:.2f} USD) FINISHED: DRAW (assumed). P/L: {api_profit_amount:.2f} USD. Close Price: {close_price}")
+                        logger.debug(f"Outcome: DRAW. Wins: {consecutive_wins}, Losses: {consecutive_losses}. Daily loss: {daily_loss:.2f}")
+
 
                     else:
                          logger.warning(f"Order {order_id} ({asset}) finished with unexpected win_status: {win_status_raw}. Data: {result_data}.")
@@ -140,21 +148,27 @@ async def execute_trades(client: Quotex, assets: list, indicators: dict):
                  logger.warning(f"Attempted to remove order ID {order.get('id')} but not found.")
 
 
-    # Adjust trade percentage
+    # Adjust trade percentage based on new streak logic
     old_trade_percentage = current_trade_percentage
-    if consecutive_losses >= CONSECUTIVE_LOSSES_THRESHOLD and current_trade_percentage > TRADE_PERCENTAGE_MIN:
-        current_trade_percentage = max(TRADE_PERCENTAGE_MIN, current_trade_percentage * 0.8)
-        logger.debug(f"Reducing trade percentage due to {consecutive_losses} losses. New: {current_trade_percentage:.2f}%")
-    elif consecutive_wins >= CONSECUTIVE_WINS_THRESHOLD and current_trade_percentage < TRADE_PERCENTAGE_MAX:
-         current_trade_percentage = min(TRADE_PERCENTAGE_MAX, current_trade_percentage * 1.2)
-         logger.debug(f"Increasing trade percentage due to {consecutive_wins} wins. New: {current_trade_percentage:.2f}%")
-    else:
-        current_trade_percentage = TRADE_PERCENTAGE
-        current_trade_percentage = max(TRADE_PERCENTAGE_MIN, current_trade_percentage)
-        current_trade_percentage = min(TRADE_PERCENTAGE_MAX, current_trade_percentage)
 
-    if current_trade_percentage != old_trade_percentage:
+    if consecutive_wins > 0 and (consecutive_wins - 1) >= CONSECUTIVE_WINS_THRESHOLD:
+        adjustment_steps = consecutive_wins - CONSECUTIVE_WINS_THRESHOLD
+        current_trade_percentage += adjustment_steps * TRADE_PERCENTAGE_STEP
+        logger.debug(f"Applying win streak adjustment: {adjustment_steps} steps of {TRADE_PERCENTAGE_STEP}%. New percentage before clamp: {current_trade_percentage:.2f}%")
+
+    elif consecutive_losses > 0 and (consecutive_losses - 1) >= CONSECUTIVE_LOSSES_THRESHOLD:
+         adjustment_steps = consecutive_losses - CONSECUTIVE_LOSSES_THRESHOLD
+         current_trade_percentage -= adjustment_steps * TRADE_PERCENTAGE_STEP
+         logger.debug(f"Applying loss streak adjustment: {adjustment_steps} steps of {TRADE_PERCENTAGE_STEP}%. New percentage before clamp: {current_trade_percentage:.2f}%")
+
+    current_trade_percentage = max(TRADE_PERCENTAGE_MIN, current_trade_percentage)
+    current_trade_percentage = min(TRADE_PERCENTAGE_MAX, current_trade_percentage)
+
+    if abs(current_trade_percentage - old_trade_percentage) > 0.01:
          logger.info(f"Trade percentage adjusted: {old_trade_percentage:.2f}% to {current_trade_percentage:.2f}% (Wins: {consecutive_wins}, Losses: {consecutive_losses}).")
+    else:
+         logger.debug(f"Trade percentage remains {current_trade_percentage:.2f}% (Wins: {consecutive_wins}, Losses: {consecutive_losses}).")
+
 
     # Check daily loss limit
     if initial_daily_balance is not None and initial_daily_balance > 0:
@@ -171,12 +185,23 @@ async def execute_trades(client: Quotex, assets: list, indicators: dict):
     # Execute new trades
     logger.debug("Checking for new trade opportunities...")
     trade_executed_in_this_cycle = False
-    balance = current_balance_at_start
 
-    if balance is None or not isinstance(balance, (int, float)) or balance <= 0:
-         logger.warning("Invalid or zero balance. Cannot place new trades.")
-         logger.debug(f"--- Exiting execute_trades due to insufficient balance ---")
+    # --- Get the most recent balance before STARTING the new trade loop ---
+    # Use this as a starting point, but update it with API response balance after trades
+    current_balance = None
+    try:
+        current_balance = await client.get_balance()
+        if current_balance is None or not isinstance(current_balance, (int, float)) or current_balance <= 0:
+             logger.warning(f"Could not get valid initial balance ({current_balance}) for new trades. Skipping execution.")
+             logger.debug(f"--- Exiting execute_trades due to insufficient initial balance ---")
+             return
+        logger.debug(f"Balance fetched at start of new trade checks: {current_balance:.2f} USD")
+    except Exception as e:
+         logger.error(f"Error getting balance at start of new trade checks: {e}", exc_info=True)
+         logger.debug(f"--- Exiting execute_trades due to balance fetch error ---")
          return
+    # --- End get balance at loop start ---
+
 
     logger.debug(f"Iterating through {len(assets)} assets to find a signal...")
     for asset in assets:
@@ -244,24 +269,22 @@ async def execute_trades(client: Quotex, assets: list, indicators: dict):
              condition_reason = f"Indicator/price not numeric (RSI:{rsi}, Price:{current_price}, SMA:{sma}, ATR:{atr})"
              logger.warning(f"Non-numeric indicator/price for {asset}: {condition_reason}")
 
+
         if not trade_condition_met:
             logger.debug(f"No trade signal for {asset}. {condition_reason}")
             continue
 
         logger.info(f"Trade signal found for {asset}: {direction.upper()}. {condition_reason}")
 
-        if balance is None or not isinstance(balance, (int, float)) or balance <= 0:
-             logger.error(f"Cannot calculate trade amount: Invalid balance ({balance}). Skipping trade for {asset}.")
-             continue
-
-        amount = (current_trade_percentage / 100) * balance
+        # --- Calculate amount using the CURRENT value of the 'current_balance' variable ---
+        # This variable is updated with the API response balance after successful trades.
+        amount = (current_trade_percentage / 100) * current_balance
         amount = max(1.0, amount)
-        # Use the configurable max limit
         amount = min(amount, TRADE_MAX_AMOUNT)
         amount = round(amount, 2)
 
         if amount < 1.0:
-             logger.warning(f"Calculated amount ({amount:.2f} USD) < min (1.00 USD). Skipping trade for {asset}.")
+             logger.warning(f"Calculated amount ({amount:.2f} USD) < min (1.00 USD) for {asset}. Skipping trade.")
              continue
 
         duration = TRADE_DURATION
@@ -300,34 +323,45 @@ async def execute_trades(client: Quotex, assets: list, indicators: dict):
                      trade_executed_in_this_cycle = True
                      logger.debug(f"Trade execution flag set.")
 
+                     # --- Update the internal 'current_balance' variable with API reported balance ---
+                     # This updated value will be used for subsequent trade calculations in THIS cycle.
                      reported_balance = response.get('accountBalance')
                      if reported_balance is not None and isinstance(reported_balance, (int, float)):
-                        balance = reported_balance
-                        logger.debug(f"Balance updated from API: {balance:.2f} USD")
+                        current_balance = reported_balance # Update the variable used for calculation
+                        logger.debug(f"Internal balance updated from API response for next trade calculation: {current_balance:.2f} USD")
                      else:
-                        balance -= amount
-                        logger.debug(f"Balance estimated: {balance:.2f} USD")
+                        # If API balance is not available in response, estimate
+                        current_balance -= amount
+                        logger.debug(f"Internal balance estimated after trade for next trade calculation: {current_balance:.2f} USD")
+                     # --- End balance update ---
 
                 else:
-                     logger.warning(f"Order placed for {asset}, but no ID in response: {response}. Cannot track.")
+                     logger.warning(f"Order placed for {asset}, but no Order ID in response: {response}. Cannot reliably track outcome.")
                      last_trade_time[asset] = current_time
                      trade_executed_in_this_cycle = True
 
             else:
-                logger.error(f"Failed to place {direction.upper()} order for {asset}. Success: {success}. Response: {response}")
+                logger.error(f"Failed to place {direction.upper()} order for {asset}. Success status: {success}. Response: {response}")
+                # Optional: Apply cooldown on failure if appropriate
+                # last_trade_time[asset] = current_time
 
         except Exception as e:
-            logger.error(f"Exception placing {direction.upper()} trade for {asset}: {e}", exc_info=True)
+            logger.error(f"Exception while trying to place {direction.upper()} trade for {asset}: {e}", exc_info=True)
             last_trade_time[asset] = current_time
+
+        # Add a delay after attempting to place an order before checking the next asset
+        await asyncio.sleep(ORDER_PLACEMENT_DELAY)
+        logger.debug(f"Waited {ORDER_PLACEMENT_DELAY}s after attempting trade for {asset}.")
 
         # If you want to trade only ONE asset per cycle, uncomment the next line:
         # if trade_executed_in_this_cycle:
         #    logger.debug("Trade placed in this cycle. Stopping check for other assets.")
-        #    break # <<< This line remains commented if you don't want to limit to one trade per cycle
+        #    break
 
+    # Modified Final Log
     if trade_executed_in_this_cycle:
          logger.info(f"One or more new trades were executed in this cycle.")
     else:
-         logger.info(f"No new trades were executed in this cycle.")
+         logger.info(f"No new trades were executed in this cycle for any asset that passed initial filters.")
     logger.debug(f"Trade execution loop finished.")
     logger.debug(f"--- Exiting execute_trades ---")
