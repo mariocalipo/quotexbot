@@ -152,6 +152,14 @@ async def main():
         logger.info("Starting new trading cycle...")
 
         try:
+            # Check connection before processing assets
+            logger.debug("Checking connection status before processing assets...")
+            if not await check_connection(client):
+                logger.warning("Connection lost. Attempting to reconnect...")
+                if not await reconnect(client):
+                    logger.critical("Failed to reconnect. Exiting.")
+                    return
+
             logger.info("Listing and filtering open OTC assets...")
             open_assets_details = await list_open_otc_assets(client)
             assets_for_trade = []
