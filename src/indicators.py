@@ -10,29 +10,32 @@ from settings import (
 )
 from cachetools import TTLCache
 
+# Initialize logger for this module
 logger = logging.getLogger(__name__)
 
-# Cache com TTL proporcional ao timeframe (5x timeframe) e tamanho máximo de 100 entradas
 def get_indicator_cache(timeframe: int):
-    ttl = timeframe * 5  # TTL = 5x o timeframe (ex.: 300s para timeframe=60s)
+    """Create a TTL cache with expiration proportional to the timeframe."""
+    ttl = timeframe * 5  # TTL is 5x the timeframe (e.g., 300s for timeframe=60s)
     return TTLCache(maxsize=100, ttl=ttl)
 
 async def calculate_indicators(client: Quotex, assets: list, timeframe: int = 60) -> dict:
+    """Calculate technical indicators for the specified assets and timeframe."""
     if not assets:
-        logger.debug("No assets provided to calculate_indicators. Returning empty dict.")
+        logger.debug("No assets provided for indicator calculation. Returning empty dictionary.")
         return {}
 
-    # Criar cache específico para o timeframe
+    # Create cache specific to the timeframe
     indicator_cache = get_indicator_cache(timeframe)
 
-    # Criar chave de cache baseada nos ativos e timeframe
+    # Generate cache key based on timeframe and sorted assets
     cache_key = f"{timeframe}_{','.join(sorted(assets))}"
     
-    # Verificar se o resultado está no cache
+    # Check if results are in cache
     if cache_key in indicator_cache:
         logger.debug(f"Returning cached indicators for key: {cache_key}")
         return indicator_cache[cache_key]
 
+    # Configure indicators based on settings
     indicators_config = []
     if RSI_INDICATOR:
         try:
@@ -75,12 +78,13 @@ async def calculate_indicators(client: Quotex, assets: list, timeframe: int = 60
             logger.error(f"Unexpected error configuring ATR: {e}. ATR skipped.")
 
     if not indicators_config:
-        logger.warning("No indicators enabled or configured correctly. No indicators calculated.")
+        logger.warning("No indicators enabled or configured correctly. Returning empty results.")
         return {asset: {} for asset in assets}
 
     results = {asset: {} for asset in assets}
     logger.debug(f"Calculating {len(indicators_config)} indicators for {len(assets)} assets with timeframe {timeframe}s...")
 
+    # Determine maximum period for candle history size
     max_period = 0
     for _, params, _, _ in indicators_config:
         period = params.get('period', 0)
@@ -93,14 +97,14 @@ async def calculate_indicators(client: Quotex, assets: list, timeframe: int = 60
         try:
             candles = await client.get_candles(asset, time.time(), history_size, timeframe)
             if not candles:
-                logger.warning(f"No candle data available for {asset} (timeframe {timeframe}s, history {history_size}s). Cannot calculate indicators.")
+                logger.warning(f"No candle data available for {asset} (timeframe {timeframe}s, history {history_size}s). Skipping indicator calculation.")
                 continue
 
             prices = [float(candle["close"]) for candle in candles]
             highs = [float(candle["high"]) for candle in candles]
             lows = [float(candle["low"]) for candle in candles]
 
-            logger.debug(f"Calculating indicators for asset {asset} ({len(candles)} candles)...")
+            logger.debug(f"Calculating indicators for {asset} ({len(candles)} candles)...")
 
             for indicator_name, params, min_val_filter, max_val_filter in indicators_config:
                 try:
@@ -113,7 +117,7 @@ async def calculate_indicators(client: Quotex, assets: list, timeframe: int = 60
                     )
 
                     if 'error' in indicator_result:
-                        logger.warning(f"Calculation error for {indicator_name} on {asset}: {indicator_result['error']}. Value set to None.")
+                        logger.warning(f"Error calculating {indicator_name} for {asset}: {indicator_result['error']}. Setting value to None.")
                         results[asset][indicator_name] = None
                     else:
                         value = indicator_result.get('current')
@@ -127,10 +131,10 @@ async def calculate_indicators(client: Quotex, assets: list, timeframe: int = 60
                                 results[asset][indicator_name] = value
                                 logger.debug(f"Calculated {indicator_name} for {asset}: {value:.5f} (within filter)")
                             else:
-                                logger.debug(f"Calculated {indicator_name} for {asset}: {value:.5f} (outside filter). Filtered out.")
+                                logger.debug(f"Calculated {indicator_name} for {asset}: {value:.5f} (outside filter). Setting to None.")
                                 results[asset][indicator_name] = None
                         else:
-                            logger.debug(f"No valid numeric value for {indicator_name} on {asset}. Value set to None.")
+                            logger.debug(f"No valid numeric value for {indicator_name} on {asset}. Setting to None.")
                             results[asset][indicator_name] = None
 
                 except Exception as e:
@@ -140,9 +144,9 @@ async def calculate_indicators(client: Quotex, assets: list, timeframe: int = 60
         except Exception as e:
             logger.error(f"Error fetching candles or processing data for {asset}: {e}", exc_info=True)
 
-    # Armazenar resultado no cache
+    # Store results in cache
     indicator_cache[cache_key] = results
     logger.debug(f"Cached indicators for key: {cache_key} with TTL={indicator_cache.ttl} seconds")
 
-    logger.debug("Indicator calculation process completed.")
+    logger.debug("Completed indicator calculation process.")
     return results

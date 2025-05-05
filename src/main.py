@@ -17,7 +17,7 @@ from trade import execute_trades
 from indicators import calculate_indicators
 
 def setup_logging():
-    """Configure logging format and level for the application, with output to both console and file."""
+    """Configure logging format and level with output to console and file."""
     if not logging.getLogger().hasHandlers():
         logger = logging.getLogger()
         logger.setLevel(logging.DEBUG)
@@ -30,18 +30,19 @@ def setup_logging():
         log_file.parent.mkdir(parents=True, exist_ok=True)
         file_handler = RotatingFileHandler(
             log_file,
-            maxBytes=5*1024*1024,
-            backupCount=3
+            maxBytes=5*1024*1024,  # 5 MB limit
+            backupCount=3  # Keep up to 3 old log files
         )
         file_handler.setFormatter(log_format)
         file_handler.setLevel(logging.DEBUG)
         logger.addHandler(file_handler)
 
+# Initialize logger for this module
 logger = logging.getLogger(__name__)
 
 async def check_connection(client: Quotex) -> bool:
-    """Check if the connection is still active by attempting a simple API call."""
-    logger.debug("Performing connection check...")
+    """Verify if the connection to the Quotex API is active."""
+    logger.debug("Checking connection status...")
     try:
         balance = await client.get_balance()
         logger.debug(f"Connection check successful. Current balance: {balance:.2f} USD")
@@ -74,14 +75,14 @@ async def reconnect(client: Quotex, max_attempts: int = 5) -> bool:
                     account_type = "Demo" if client.account_is_demo > 0 else "Real"
                     logger.info(f"Account balance ({account_type}) after reconnection: {balance:.2f} USD")
                 except Exception as e:
-                    logger.warning(f"Failed to get balance after reconnection: {e}", exc_info=False)
+                    logger.warning(f"Failed to retrieve balance after reconnection: {e}", exc_info=False)
                 return True
-            logger.warning(f"Attempt {attempt} failed: {reason}")
+            logger.warning(f"Reconnection attempt {attempt} failed: {reason}")
         except Exception as e:
-            logger.error(f"Error in attempt {attempt}: {e}", exc_info=False)
+            logger.error(f"Error during reconnection attempt {attempt}: {e}", exc_info=False)
         delay = min(5 * (2 ** attempt), 60)  # Exponential backoff: 5s, 10s, 20s, 40s, max 60s
         await asyncio.sleep(delay)
-    logger.critical("Failed to reconnect after max attempts.")
+    logger.critical("Failed to reconnect after maximum attempts.")
     return False
 
 async def main():
@@ -90,7 +91,7 @@ async def main():
     logger.info("Starting Quotex trading bot...")
 
     if not EMAIL or not PASSWORD:
-        logger.critical("Email or password not provided in environment variables (.env). Exiting.")
+        logger.critical("Email or password not provided in .env file. Exiting.")
         return
 
     logger.info("Initializing Quotex client...")
@@ -123,17 +124,17 @@ async def main():
             else:
                 logger.error(f"Connection attempt {init_attempt} failed: {reason}")
         except Exception as e:
-            logger.error(f"An unexpected error occurred during initial connection attempt {init_attempt}: {e}", exc_info=False)
+            logger.error(f"Unexpected error during connection attempt {init_attempt}: {e}", exc_info=False)
 
         if not connected:
             if init_attempt == max_init_attempts:
-                logger.critical("Maximum initial connection attempts reached. Exiting.")
+                logger.critical("Failed to establish initial connection after maximum attempts. Exiting.")
                 return
             init_attempt += 1
             await asyncio.sleep(init_delay)
 
     if not connected:
-        logger.critical("Could not establish initial connection after multiple attempts. Exiting.")
+        logger.critical("Could not establish initial connection. Exiting.")
         return
 
     try:
@@ -148,7 +149,7 @@ async def main():
     while True:
         start_time_cycle = time.time()
         logger.info("-" * 50)
-        logger.info("Starting new main cycle...")
+        logger.info("Starting new trading cycle...")
 
         try:
             logger.info("Listing and filtering open OTC assets...")
@@ -158,9 +159,9 @@ async def main():
             skipped_items_count = 0
 
             if not open_assets_details:
-                logger.info("No open OTC assets found with sufficient payout or matching criteria.")
+                logger.info("No open OTC assets meet payout or trading criteria.")
             else:
-                logger.debug(f"Processing {len(open_assets_details)} items returned by list_open_otc_assets.")
+                logger.debug(f"Processing {len(open_assets_details)} items from list_open_otc_assets.")
                 for item in open_assets_details:
                     if isinstance(item, (list, tuple)) and len(item) == 2:
                         try:
@@ -169,7 +170,7 @@ async def main():
                                 assets_for_trade.append(asset)
                                 valid_assets_details_for_log.append((asset, payout))
                             else:
-                                logger.warning(f"Skipping item: Unexpected types/values. Expected (str, number), got ({type(asset)}, {type(payout)}). Item: {item}")
+                                logger.warning(f"Skipping item: Expected (str, number), got ({type(asset)}, {type(payout)}). Item: {item}")
                                 skipped_items_count += 1
                         except Exception as e:
                             logger.warning(f"Skipping item: Failed to unpack {item}: {e}")
@@ -180,12 +181,12 @@ async def main():
                         skipped_items_count += 1
 
                 if skipped_items_count > 0:
-                    logger.warning(f"Filtered out {skipped_items_count} items due to unexpected format.")
+                    logger.warning(f"Filtered out {skipped_items_count} items due to invalid format.")
 
             initial_indicators_log = {}
             initial_prices_log = {}
             if assets_for_trade:
-                logger.debug(f"Processing indicators and prices for {len(assets_for_trade)} valid assets.")
+                logger.debug(f"Fetching indicators and prices for {len(assets_for_trade)} valid assets.")
                 initial_indicators_log = await calculate_indicators(client, assets_for_trade)
                 try:
                     price_tasks = [client.get_realtime_price(asset) for asset in assets_for_trade]
@@ -197,10 +198,10 @@ async def main():
                         elif isinstance(price_data, dict) and price_data:
                             initial_prices_log[asset] = price_data.get('price', 'N/A')
                         elif isinstance(price_data, Exception):
-                            logger.warning(f"Exception fetching initial price for {asset}: {price_data}", exc_info=False)
+                            logger.warning(f"Failed to fetch initial price for {asset}: {price_data}", exc_info=False)
                             initial_prices_log[asset] = 'N/A'
                         else:
-                            logger.warning(f"Could not get initial price for {asset}: Unexpected data type {type(price_data)}")
+                            logger.warning(f"Could not fetch initial price for {asset}: Unexpected data type {type(price_data)}")
                             initial_prices_log[asset] = 'N/A'
                 except Exception as e:
                     logger.warning(f"Unexpected error during initial price fetching: {e}", exc_info=False)
@@ -211,10 +212,10 @@ async def main():
                         price = initial_prices_log.get(asset, "N/A")
                         indicator_values_log = initial_indicators_log.get(asset, {})
                         indicator_str = ", ".join(f"{ind}: {val:.5f}" if isinstance(val, (int, float)) and val is not None else f"{ind}: N/A" for ind, val in indicator_values_log.items())
-                        logger.info(f"    - {asset}: Payout {payout}%, Price: {price}, Initial Indicators: [{indicator_str}]")
+                        logger.info(f"    - {asset}: Payout {payout}%, Price: {price}, Indicators: [{indicator_str}]")
                 logger.info("---------------------------------------------------")
             else:
-                logger.info("No assets passed all filtering and initial trading criteria.")
+                logger.info("No assets passed filtering and trading criteria.")
 
             if assets_for_trade:
                 logger.info("Executing trading logic...")
@@ -230,15 +231,15 @@ async def main():
                     return
 
         except Exception as e:
-            logger.error(f"Unexpected error in main cycle: {e}", exc_info=True)
+            logger.error(f"Unexpected error in trading cycle: {e}", exc_info=True)
 
         end_time_cycle = time.time()
         cycle_duration = end_time_cycle - start_time_cycle
         wait_time_needed = max(0, TRADE_COOLDOWN - cycle_duration)
 
         if wait_time_needed > 0:
-            logger.info(f"Main cycle completed in {cycle_duration:.2f} seconds.")
-            logger.info(f"Waiting for {wait_time_needed:.2f} seconds before next cycle (TRADE_COOLDOWN={TRADE_COOLDOWN}s).")
+            logger.info(f"Trading cycle completed in {cycle_duration:.2f} seconds.")
+            logger.info(f"Waiting {wait_time_needed:.2f} seconds before next cycle (TRADE_COOLDOWN={TRADE_COOLDOWN}s).")
             sleep_interval = 10
             start_wait_time = time.time()
             while True:
@@ -255,9 +256,9 @@ async def main():
                 remaining_wait = max(0, wait_time_needed - (time.time() - start_wait_time))
                 if remaining_wait > 0:
                     logger.info(f"Time until next cycle: {remaining_wait:.2f} seconds remaining.")
-            logger.debug("Waiting period concluded.")
+            logger.debug("Waiting period completed.")
         else:
-            logger.info(f"Main cycle completed in {cycle_duration:.2f} seconds. No waiting needed.")
+            logger.info(f"Trading cycle completed in {cycle_duration:.2f} seconds. No waiting needed.")
 
 if __name__ == "__main__":
     setup_logging()
