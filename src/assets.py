@@ -1,7 +1,7 @@
 import logging
 import asyncio
 from quotexapi.stable_api import Quotex
-from settings import TIMEFRAME, MIN_PAYOUT, ASSETS, SORT_BY, SORT_ORDER, RSI_BUY_THRESHOLD, RSI_SELL_THRESHOLD, ATR_MAX
+from settings import TIMEFRAME, MIN_PAYOUT, ASSETS, SORT_BY, SORT_ORDER, RSI_BUY_THRESHOLD, RSI_SELL_THRESHOLD, ATR_MAX, MACD_INDICATOR
 from indicators import calculate_indicators
 
 # Initialize logger for this module
@@ -14,7 +14,6 @@ async def get_realtime_prices(client: Quotex, assets: list) -> dict:
         logger.debug("No assets provided to fetch real-time prices. Returning empty dictionary.")
         return {}
 
-    # Start price streams concurrently
     price_stream_tasks = [client.start_realtime_price(asset) for asset in assets]
     await asyncio.gather(*price_stream_tasks, return_exceptions=True)
 
@@ -52,17 +51,12 @@ async def get_realtime_prices(client: Quotex, assets: list) -> dict:
     return prices
 
 async def list_open_otc_assets(client: Quotex):
-    """
-    List open OTC assets with sufficient payout and calculate initial indicators.
-    Returns a list of (asset_name, payout) tuples for assets meeting criteria.
-    """
-    # Define valid timeframes for payout checks
+    """List open OTC assets with sufficient payout and calculate initial indicators."""
     valid_timeframes_payout = ['1M', '5M', '24H']
     timeframe_payout = TIMEFRAME if TIMEFRAME in valid_timeframes_payout else '1M'
     if TIMEFRAME not in valid_timeframes_payout:
         logger.warning(f"Invalid TIMEFRAME '{TIMEFRAME}' in .env. Expected '1M', '5M', or '24H'. Defaulting to '1M' for payout check.")
 
-    # Validate sorting options
     valid_sort_by = ['payout', 'price']
     sort_by = SORT_BY if SORT_BY in valid_sort_by else 'payout'
     if SORT_BY not in valid_sort_by:
@@ -97,7 +91,6 @@ async def list_open_otc_assets(client: Quotex):
         logger.error(f"Failed to retrieve assets from client: {e}", exc_info=True)
         return []
 
-    # Identify OTC assets by name
     otc_assets_names = [asset for asset in all_assets_dict.keys() if asset and isinstance(asset, str) and asset.lower().endswith('_otc')]
     logger.debug(f"Identified {len(otc_assets_names)} OTC assets based on naming.")
 
@@ -181,29 +174,48 @@ async def list_open_otc_assets(client: Quotex):
         logger.info("No assets meet payout criteria. Skipping indicator calculation.")
 
     tradable_assets_final = []
-    logger.debug("Applying initial trading criteria (RSI, Price vs SMA, ATR) to filter assets...")
+    logger.debug("Applying initial trading criteria (RSI, Price vs SMA, ATR, MACD) to filter assets...")
     for asset, payout in open_otc_assets_with_payout:
         indicator_values = indicators.get(asset, {})
         price = prices.get(asset)
         rsi = indicator_values.get("RSI")
         sma = indicator_values.get("SMA")
         atr = indicator_values.get("ATR")
+        macd = indicator_values.get("MACD", {}).get("macd")
+        macd_signal = indicator_values.get("MACD", {}).get("signal")
 
-        logger.debug(f"Checking {asset} for trading criteria: Price={price}, RSI={rsi}, SMA={sma}, ATR={atr}. Payout={payout}%.")
+        logger.debug(f"Checking {asset} for trading criteria: Price={price}, RSI={rsi}, SMA={sma}, ATR={atr}, MACD={macd}, MACD_Signal={macd_signal}. Payout={payout}%.")
         if (
             isinstance(rsi, (int, float)) and rsi is not None and
             isinstance(sma, (int, float)) and sma is not None and
             isinstance(atr, (int, float)) and atr is not None and
             isinstance(price, (int, float)) and price is not None
         ):
+            # Check MACD if enabled
+            macd_valid = not MACD_INDICATOR or (
+                isinstance(macd, (int, float)) and isinstance(macd_signal, (int, float)) and
+                macd is not None and macd_signal is not None
+            )
+            if not macd_valid:
+                logger.debug(f"Skipping {asset}: Invalid or missing MACD indicators (MACD={macd}, Signal={macd_signal}).")
+                continue
+
             meets_trading_criteria = False
             reason = "Trading criteria not met"
-            if rsi < RSI_BUY_THRESHOLD and price > sma:
-                meets_trading_criteria = True
-                reason = f"CALL criterion met (RSI={rsi:.2f} < {RSI_BUY_THRESHOLD}, Price={price:.5f} > SMA={sma:.5f})"
-            elif rsi > RSI_SELL_THRESHOLD and atr < ATR_MAX:
-                meets_trading_criteria = True
-                reason = f"PUT criterion met (RSI={rsi:.2f} > {RSI_SELL_THRESHOLD}, ATR={atr:.5f} < {ATR_MAX})"
+            if MACD_INDICATOR:
+                if rsi < RSI_BUY_THRESHOLD and price > sma and macd > macd_signal:
+                    meets_trading_criteria = True
+                    reason = f"CALL criterion met (RSI={rsi:.2f} < {RSI_BUY_THRESHOLD}, Price={price:.5f} > SMA={sma:.5f}, MACD={macd:.5f} > Signal={macd_signal:.5f})"
+                elif rsi > RSI_SELL_THRESHOLD and atr < ATR_MAX and macd < macd_signal:
+                    meets_trading_criteria = True
+                    reason = f"PUT criterion met (RSI={rsi:.2f} > {RSI_SELL_THRESHOLD}, ATR={atr:.5f} < {ATR_MAX}, MACD={macd:.5f} < Signal={macd_signal:.5f})"
+            else:
+                if rsi < RSI_BUY_THRESHOLD and price > sma:
+                    meets_trading_criteria = True
+                    reason = f"CALL criterion met (RSI={rsi:.2f} < {RSI_BUY_THRESHOLD}, Price={price:.5f} > SMA={sma:.5f})"
+                elif rsi > RSI_SELL_THRESHOLD and atr < ATR_MAX:
+                    meets_trading_criteria = True
+                    reason = f"PUT criterion met (RSI={rsi:.2f} > {RSI_SELL_THRESHOLD}, ATR={atr:.5f} < {ATR_MAX})"
 
             if meets_trading_criteria:
                 tradable_assets_final.append((asset, payout))
@@ -211,7 +223,7 @@ async def list_open_otc_assets(client: Quotex):
             else:
                 logger.debug(f"{asset} failed trading criteria: {reason}.")
         else:
-            logger.debug(f"Skipped {asset}: Missing or non-numeric data (RSI={rsi}, SMA={sma}, ATR={atr}, Price={price}).")
+            logger.debug(f"Skipped {asset}: Missing or non-numeric data (RSI={rsi}, SMA={sma}, ATR={atr}, Price={price}, MACD={macd}, Signal={macd_signal}).")
 
     # Sort the final list of tradable assets
     reverse = (sort_order == 'desc')

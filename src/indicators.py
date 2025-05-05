@@ -6,7 +6,8 @@ from settings import (
     RSI_INDICATOR, RSI_PERIOD, RSI_MIN, RSI_MAX,
     SMA_INDICATOR, SMA_PERIOD, SMA_MIN, SMA_MAX,
     EMA_INDICATOR, EMA_PERIOD, EMA_MIN, EMA_MAX,
-    ATR_INDICATOR, ATR_PERIOD, ATR_MIN, ATR_MAX
+    ATR_INDICATOR, ATR_PERIOD, ATR_MIN, ATR_MAX,
+    MACD_INDICATOR, MACD_FAST_PERIOD, MACD_SLOW_PERIOD, MACD_SIGNAL_PERIOD
 )
 from cachetools import TTLCache
 
@@ -75,7 +76,21 @@ async def calculate_indicators(client: Quotex, assets: list, timeframe: int = 60
         except ValueError as e:
             logger.error(f"Invalid ATR configuration: {e}. Check .env. ATR skipped.")
         except Exception as e:
-            logger.error(f"Unexpected error configuring ATR: {e}. ATR skipped.")
+            logger.error(f"Unexpected error configuring ATR: {e}. RSI skipped.")
+
+    if MACD_INDICATOR:
+        try:
+            params = {
+                'fast_period': int(MACD_FAST_PERIOD),
+                'slow_period': int(MACD_SLOW_PERIOD),
+                'signal_period': int(MACD_SIGNAL_PERIOD)
+            }
+            indicators_config.append(('MACD', params, float('-inf'), float('inf')))
+            logger.debug(f"MACD enabled: fast_period={params['fast_period']}, slow_period={params['slow_period']}, signal_period={params['signal_period']}")
+        except ValueError as e:
+            logger.error(f"Invalid MACD configuration: {e}. Check .env. MACD skipped.")
+        except Exception as e:
+            logger.error(f"Unexpected error configuring MACD: {e}. MACD skipped.")
 
     if not indicators_config:
         logger.warning("No indicators enabled or configured correctly. Returning empty results.")
@@ -86,8 +101,11 @@ async def calculate_indicators(client: Quotex, assets: list, timeframe: int = 60
 
     # Determine maximum period for candle history size
     max_period = 0
-    for _, params, _, _ in indicators_config:
-        period = params.get('period', 0)
+    for indicator_name, params, _, _ in indicators_config:
+        if indicator_name == 'MACD':
+            period = max(params.get('slow_period', 0), params.get('signal_period', 0))
+        else:
+            period = params.get('period', 0)
         max_period = max(max_period, period)
     history_size = max(3600, timeframe * (max_period + 50))
 
@@ -120,22 +138,34 @@ async def calculate_indicators(client: Quotex, assets: list, timeframe: int = 60
                         logger.warning(f"Error calculating {indicator_name} for {asset}: {indicator_result['error']}. Setting value to None.")
                         results[asset][indicator_name] = None
                     else:
-                        value = indicator_result.get('current')
-                        if value is None:
-                            value_list = indicator_result.get('value')
-                            if isinstance(value_list, list) and value_list:
-                                value = value_list[-1]
-
-                        if value is not None and isinstance(value, (int, float)):
-                            if min_val_filter <= value <= max_val_filter:
+                        if indicator_name == 'MACD':
+                            value = {
+                                'macd': indicator_result.get('macd')[-1] if indicator_result.get('macd') else None,
+                                'signal': indicator_result.get('signal')[-1] if indicator_result.get('signal') else None
+                            }
+                            if value['macd'] is not None and value['signal'] is not None:
                                 results[asset][indicator_name] = value
-                                logger.debug(f"Calculated {indicator_name} for {asset}: {value:.5f} (within filter)")
+                                logger.debug(f"Calculated {indicator_name} for {asset}: MACD={value['macd']:.5f}, Signal={value['signal']:.5f}")
                             else:
-                                logger.debug(f"Calculated {indicator_name} for {asset}: {value:.5f} (outside filter). Setting to None.")
+                                logger.debug(f"No valid MACD values for {asset}. Setting to None.")
                                 results[asset][indicator_name] = None
                         else:
-                            logger.debug(f"No valid numeric value for {indicator_name} on {asset}. Setting to None.")
-                            results[asset][indicator_name] = None
+                            value = indicator_result.get('current')
+                            if value is None:
+                                value_list = indicator_result.get('value')
+                                if isinstance(value_list, list) and value_list:
+                                    value = value_list[-1]
+
+                            if value is not None and isinstance(value, (int, float)):
+                                if min_val_filter <= value <= max_val_filter:
+                                    results[asset][indicator_name] = value
+                                    logger.debug(f"Calculated {indicator_name} for {asset}: {value:.5f} (within filter)")
+                                else:
+                                    logger.debug(f"Calculated {indicator_name} for {asset}: {value:.5f} (outside filter). Setting to None.")
+                                    results[asset][indicator_name] = None
+                            else:
+                                logger.debug(f"No valid numeric value for {indicator_name} on {asset}. Setting to None.")
+                                results[asset][indicator_name] = None
 
                 except Exception as e:
                     logger.error(f"Error calculating {indicator_name} for {asset}: {e}", exc_info=True)

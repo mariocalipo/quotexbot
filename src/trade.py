@@ -5,7 +5,8 @@ from quotexapi.stable_api import Quotex
 from settings import (
     TRADE_ENABLED, TRADE_PERCENTAGE, TRADE_PERCENTAGE_MIN, TRADE_PERCENTAGE_MAX,
     TRADE_DURATION, RSI_BUY_THRESHOLD, RSI_SELL_THRESHOLD, ATR_MAX, TRADE_COOLDOWN,
-    DAILY_LOSS_LIMIT, CONSECUTIVE_LOSSES_THRESHOLD, CONSECUTIVE_WINS_THRESHOLD
+    DAILY_LOSS_LIMIT, CONSECUTIVE_LOSSES_THRESHOLD, CONSECUTIVE_WINS_THRESHOLD,
+    MACD_INDICATOR, MACD_FAST_PERIOD, MACD_SLOW_PERIOD, MACD_SIGNAL_PERIOD
 )
 
 # Initialize logger for this module
@@ -14,14 +15,14 @@ logger = logging.getLogger(__name__)
 class TradingState:
     """Class to manage trading state safely."""
     def __init__(self):
-        self.open_orders = []  # List of open orders
-        self.last_trade_time = {}  # Last trade time per asset
-        self.daily_loss = 0.0  # Accumulated daily loss
-        self.initial_daily_balance = 0.0  # Initial balance for the day
-        self.last_reset_time = None  # Last daily reset timestamp
-        self.consecutive_losses = 0  # Count of consecutive losses
-        self.consecutive_wins = 0  # Count of consecutive wins
-        self.current_trade_percentage = TRADE_PERCENTAGE  # Current trade size percentage
+        self.open_orders = []
+        self.last_trade_time = {}
+        self.daily_loss = 0.0
+        self.initial_daily_balance = 0.0
+        self.last_reset_time = None
+        self.consecutive_losses = 0
+        self.consecutive_wins = 0
+        self.current_trade_percentage = TRADE_PERCENTAGE
 
     def reset_daily(self, balance: float, current_time: int):
         """Reset state for a new trading day."""
@@ -226,10 +227,15 @@ async def execute_trades(client: Quotex, assets: list, indicators: dict):
         rsi = asset_indicators.get("RSI")
         sma = asset_indicators.get("SMA")
         atr = asset_indicators.get("ATR")
+        macd = asset_indicators.get("MACD", {}).get("macd")
+        macd_signal = asset_indicators.get("MACD", {}).get("signal")
 
-        logger.debug(f"Indicators for {asset}: RSI={rsi}, SMA={sma}, ATR={atr}")
+        logger.debug(f"Indicators for {asset}: RSI={rsi}, SMA={sma}, ATR={atr}, MACD={macd}, MACD_Signal={macd_signal}")
         if not all(isinstance(val, (int, float)) for val in [rsi, sma, atr]) or any(val is None for val in [rsi, sma, atr]):
             logger.debug(f"Skipping {asset}: Invalid or missing indicators (RSI={rsi}, SMA={sma}, ATR={atr}).")
+            continue
+        if MACD_INDICATOR and (macd is None or macd_signal is None or not isinstance(macd, (int, float)) or not isinstance(macd_signal, (int, float))):
+            logger.debug(f"Skipping {asset}: Invalid or missing MACD indicators (MACD={macd}, Signal={macd_signal}).")
             continue
 
         try:
@@ -255,16 +261,31 @@ async def execute_trades(client: Quotex, assets: list, indicators: dict):
         trade_condition_met = False
         condition_reason = "No trade condition met"
         if isinstance(rsi, (int, float)) and isinstance(current_price, (int, float)) and isinstance(sma, (int, float)) and isinstance(atr, (int, float)):
-            if rsi < RSI_BUY_THRESHOLD and current_price > sma:
-                direction = "call"
-                trade_condition_met = True
-                condition_reason = f"CALL condition met (RSI={rsi:.2f} < {RSI_BUY_THRESHOLD}, Price={current_price:.5f} > SMA={sma:.5f})"
-            elif rsi > RSI_SELL_THRESHOLD and atr < ATR_MAX:
-                direction = "put"
-                trade_condition_met = True
-                condition_reason = f"PUT condition met (RSI={rsi:.2f} > {RSI_SELL_THRESHOLD}, ATR={atr:.5f} < {ATR_MAX})"
+            if MACD_INDICATOR and isinstance(macd, (int, float)) and isinstance(macd_signal, (int, float)):
+                # CALL: RSI < threshold, price > SMA, MACD bullish crossover
+                if rsi < RSI_BUY_THRESHOLD and current_price > sma and macd > macd_signal:
+                    direction = "call"
+                    trade_condition_met = True
+                    condition_reason = f"CALL condition met (RSI={rsi:.2f} < {RSI_BUY_THRESHOLD}, Price={current_price:.5f} > SMA={sma:.5f}, MACD={macd:.5f} > Signal={macd_signal:.5f})"
+                # PUT: RSI > threshold, ATR < max, MACD bearish crossover
+                elif rsi > RSI_SELL_THRESHOLD and atr < ATR_MAX and macd < macd_signal:
+                    direction = "put"
+                    trade_condition_met = True
+                    condition_reason = f"PUT condition met (RSI={rsi:.2f} > {RSI_SELL_THRESHOLD}, ATR={atr:.5f} < {ATR_MAX}, MACD={macd:.5f} < Signal={macd_signal:.5f})"
+                else:
+                    condition_reason = f"Conditions not met (RSI={rsi:.2f}, Price={current_price:.5f}, SMA={sma:.5f}, ATR={atr:.5f}, MACD={macd:.5f}, Signal={macd_signal:.5f})"
             else:
-                condition_reason = f"Conditions not met (RSI={rsi:.2f}, Price={current_price:.5f}, SMA={sma:.5f}, ATR={atr:.5f}, BUY_RSI={RSI_BUY_THRESHOLD}, SELL_RSI={RSI_SELL_THRESHOLD}, ATR_MAX={ATR_MAX})"
+                # Fallback to original conditions if MACD is disabled
+                if rsi < RSI_BUY_THRESHOLD and current_price > sma:
+                    direction = "call"
+                    trade_condition_met = True
+                    condition_reason = f"CALL condition met (RSI={rsi:.2f} < {RSI_BUY_THRESHOLD}, Price={current_price:.5f} > SMA={sma:.5f})"
+                elif rsi > RSI_SELL_THRESHOLD and atr < ATR_MAX:
+                    direction = "put"
+                    trade_condition_met = True
+                    condition_reason = f"PUT condition met (RSI={rsi:.2f} > {RSI_SELL_THRESHOLD}, ATR={atr:.5f} < {ATR_MAX})"
+                else:
+                    condition_reason = f"Conditions not met (RSI={rsi:.2f}, Price={current_price:.5f}, SMA={sma:.5f}, ATR={atr:.5f})"
         else:
             condition_reason = f"Non-numeric values (RSI={rsi}, Price={current_price}, SMA={sma}, ATR={atr})"
             logger.warning(f"Invalid indicator/price values for {asset}: {condition_reason}")
