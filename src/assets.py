@@ -188,9 +188,11 @@ async def list_open_otc_assets(client: Quotex):
         if (
             isinstance(rsi, (int, float)) and rsi is not None and
             isinstance(sma, (int, float)) and sma is not None and
-            isinstance(atr, (int, float)) and atr is not None and
             isinstance(price, (int, float)) and price is not None
         ):
+            # Allow ATR to be zero or None for CALL trades
+            if atr is None or not isinstance(atr, (int, float)):
+                atr = 0.0  # Treat None as low volatility for CALL
             # Check MACD if enabled
             macd_valid = not MACD_INDICATOR or (
                 isinstance(macd, (int, float)) and isinstance(macd_signal, (int, float)) and

@@ -231,12 +231,15 @@ async def execute_trades(client: Quotex, assets: list, indicators: dict):
         macd_signal = asset_indicators.get("MACD", {}).get("signal")
 
         logger.debug(f"Indicators for {asset}: RSI={rsi}, SMA={sma}, ATR={atr}, MACD={macd}, MACD_Signal={macd_signal}")
-        if not all(isinstance(val, (int, float)) for val in [rsi, sma, atr]) or any(val is None for val in [rsi, sma, atr]):
-            logger.debug(f"Skipping {asset}: Invalid or missing indicators (RSI={rsi}, SMA={sma}, ATR={atr}).")
+        if not all(isinstance(val, (int, float)) for val in [rsi, sma]) or any(val is None for val in [rsi, sma]):
+            logger.debug(f"Skipping {asset}: Invalid or missing indicators (RSI={rsi}, SMA={sma}).")
             continue
         if MACD_INDICATOR and (macd is None or macd_signal is None or not isinstance(macd, (int, float)) or not isinstance(macd_signal, (int, float))):
             logger.debug(f"Skipping {asset}: Invalid or missing MACD indicators (MACD={macd}, Signal={macd_signal}).")
             continue
+        # Allow ATR to be zero or None for CALL trades, but require valid ATR for PUT
+        if atr is None or not isinstance(atr, (int, float)):
+            atr = 0.0  # Treat None as low volatility for CALL trades
 
         try:
             price_data = await client.get_realtime_price(asset)

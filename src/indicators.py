@@ -76,7 +76,7 @@ async def calculate_indicators(client: Quotex, assets: list, timeframe: int = 60
         except ValueError as e:
             logger.error(f"Invalid ATR configuration: {e}. Check .env. ATR skipped.")
         except Exception as e:
-            logger.error(f"Unexpected error configuring ATR: {e}. RSI skipped.")
+            logger.error(f"Unexpected error configuring ATR: {e}. ATR skipped.")
 
     if MACD_INDICATOR:
         try:
@@ -107,15 +107,15 @@ async def calculate_indicators(client: Quotex, assets: list, timeframe: int = 60
         else:
             period = params.get('period', 0)
         max_period = max(max_period, period)
-    history_size = max(3600, timeframe * (max_period + 50))
+    history_size = max(7200, timeframe * (max_period + 100))  # Increased to ensure sufficient data
 
     logger.debug(f"Fetching candle history (size: {history_size}s) for indicator calculation.")
 
     for asset in assets:
         try:
             candles = await client.get_candles(asset, time.time(), history_size, timeframe)
-            if not candles:
-                logger.warning(f"No candle data available for {asset} (timeframe {timeframe}s, history {history_size}s). Skipping indicator calculation.")
+            if not candles or len(candles) < max_period:
+                logger.warning(f"Insufficient candle data for {asset} (timeframe {timeframe}s, history {history_size}s, got {len(candles) if candles else 0} candles). Skipping.")
                 continue
 
             prices = [float(candle["close"]) for candle in candles]
@@ -143,7 +143,7 @@ async def calculate_indicators(client: Quotex, assets: list, timeframe: int = 60
                                 'macd': indicator_result.get('macd')[-1] if indicator_result.get('macd') else None,
                                 'signal': indicator_result.get('signal')[-1] if indicator_result.get('signal') else None
                             }
-                            if value['macd'] is not None and value['signal'] is not None:
+                            if value['macd'] is not None and value['signal'] is not None and isinstance(value['macd'], (int, float)) and isinstance(value['signal'], (int, float)):
                                 results[asset][indicator_name] = value
                                 logger.debug(f"Calculated {indicator_name} for {asset}: MACD={value['macd']:.5f}, Signal={value['signal']:.5f}")
                             else:
