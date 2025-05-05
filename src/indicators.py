@@ -1,6 +1,6 @@
 import logging
 import asyncio
-import time # Import the time module here
+import time
 from quotexapi.stable_api import Quotex
 from settings import (
     RSI_INDICATOR, RSI_PERIOD, RSI_MIN, RSI_MAX,
@@ -8,16 +8,32 @@ from settings import (
     EMA_INDICATOR, EMA_PERIOD, EMA_MIN, EMA_MAX,
     ATR_INDICATOR, ATR_PERIOD, ATR_MIN, ATR_MAX
 )
+from cachetools import TTLCache
 
 logger = logging.getLogger(__name__)
+
+# Cache com TTL proporcional ao timeframe (5x timeframe) e tamanho máximo de 100 entradas
+def get_indicator_cache(timeframe: int):
+    ttl = timeframe * 5  # TTL = 5x o timeframe (ex.: 300s para timeframe=60s)
+    return TTLCache(maxsize=100, ttl=ttl)
 
 async def calculate_indicators(client: Quotex, assets: list, timeframe: int = 60) -> dict:
     if not assets:
         logger.debug("No assets provided to calculate_indicators. Returning empty dict.")
         return {}
 
-    indicators_config = []
+    # Criar cache específico para o timeframe
+    indicator_cache = get_indicator_cache(timeframe)
 
+    # Criar chave de cache baseada nos ativos e timeframe
+    cache_key = f"{timeframe}_{','.join(sorted(assets))}"
+    
+    # Verificar se o resultado está no cache
+    if cache_key in indicator_cache:
+        logger.debug(f"Returning cached indicators for key: {cache_key}")
+        return indicator_cache[cache_key]
+
+    indicators_config = []
     if RSI_INDICATOR:
         try:
             params = {'period': int(RSI_PERIOD)}
@@ -34,7 +50,7 @@ async def calculate_indicators(client: Quotex, assets: list, timeframe: int = 60
             indicators_config.append(('SMA', params, float(SMA_MIN), float(SMA_MAX)))
             logger.debug(f"SMA enabled: period={params['period']}")
         except ValueError as e:
-             logger.error(f"Invalid SMA configuration: {e}. Check .env. SMA skipped.")
+            logger.error(f"Invalid SMA configuration: {e}. Check .env. SMA skipped.")
         except Exception as e:
             logger.error(f"Unexpected error configuring SMA: {e}. SMA skipped.")
 
@@ -75,8 +91,7 @@ async def calculate_indicators(client: Quotex, assets: list, timeframe: int = 60
 
     for asset in assets:
         try:
-            candles = await client.get_candles(asset, time.time(), history_size, timeframe) # Use time.time()
-
+            candles = await client.get_candles(asset, time.time(), history_size, timeframe)
             if not candles:
                 logger.warning(f"No candle data available for {asset} (timeframe {timeframe}s, history {history_size}s). Cannot calculate indicators.")
                 continue
@@ -108,22 +123,26 @@ async def calculate_indicators(client: Quotex, assets: list, timeframe: int = 60
                                 value = value_list[-1]
 
                         if value is not None and isinstance(value, (int, float)):
-                             if min_val_filter <= value <= max_val_filter:
-                                 results[asset][indicator_name] = value
-                                 logger.debug(f"Calculated {indicator_name} for {asset}: {value:.5f} (within filter)")
-                             else:
-                                 logger.debug(f"Calculated {indicator_name} for {asset}: {value:.5f} (outside filter). Filtered out.")
-                                 results[asset][indicator_name] = None
+                            if min_val_filter <= value <= max_val_filter:
+                                results[asset][indicator_name] = value
+                                logger.debug(f"Calculated {indicator_name} for {asset}: {value:.5f} (within filter)")
+                            else:
+                                logger.debug(f"Calculated {indicator_name} for {asset}: {value:.5f} (outside filter). Filtered out.")
+                                results[asset][indicator_name] = None
                         else:
-                             logger.debug(f"No valid numeric value for {indicator_name} on {asset}. Value set to None.")
-                             results[asset][indicator_name] = None
+                            logger.debug(f"No valid numeric value for {indicator_name} on {asset}. Value set to None.")
+                            results[asset][indicator_name] = None
 
                 except Exception as e:
                     logger.error(f"Error calculating {indicator_name} for {asset}: {e}", exc_info=True)
                     results[asset][indicator_name] = None
 
         except Exception as e:
-             logger.error(f"Error fetching candles or processing data for {asset}: {e}", exc_info=True)
+            logger.error(f"Error fetching candles or processing data for {asset}: {e}", exc_info=True)
+
+    # Armazenar resultado no cache
+    indicator_cache[cache_key] = results
+    logger.debug(f"Cached indicators for key: {cache_key} with TTL={indicator_cache.ttl} seconds")
 
     logger.debug("Indicator calculation process completed.")
     return results
