@@ -1,20 +1,19 @@
 import logging
 import asyncio
-import time
+import time # Import the time module here
 from quotexapi.stable_api import Quotex
 from settings import (
     RSI_INDICATOR, RSI_PERIOD, RSI_MIN, RSI_MAX,
     SMA_INDICATOR, SMA_PERIOD, SMA_MIN, SMA_MAX,
     EMA_INDICATOR, EMA_PERIOD, EMA_MIN, EMA_MAX,
-    ATR_INDICATOR, ATR_PERIOD, ATR_MIN, ATR_MAX,
-    TIMEFRAME_SECONDS
+    ATR_INDICATOR, ATR_PERIOD, ATR_MIN, ATR_MAX
 )
 
 logger = logging.getLogger(__name__)
 
-async def calculate_indicators(client: Quotex, assets: list, timeframe: int) -> dict:
+async def calculate_indicators(client: Quotex, assets: list, timeframe: int = 60) -> dict:
     if not assets:
-        logger.debug("No assets provided.")
+        logger.debug("No assets provided to calculate_indicators. Returning empty dict.")
         return {}
 
     indicators_config = []
@@ -23,65 +22,79 @@ async def calculate_indicators(client: Quotex, assets: list, timeframe: int) -> 
         try:
             params = {'period': int(RSI_PERIOD)}
             indicators_config.append(('RSI', params, float(RSI_MIN), float(RSI_MAX)))
+            logger.debug(f"RSI enabled: period={params['period']}")
+        except ValueError as e:
+            logger.error(f"Invalid RSI configuration: {e}. Check .env. RSI skipped.")
         except Exception as e:
-            logger.error(f"RSI config error: {e}. Skipped.")
+            logger.error(f"Unexpected error configuring RSI: {e}. RSI skipped.")
 
     if SMA_INDICATOR:
         try:
             params = {'period': int(SMA_PERIOD)}
             indicators_config.append(('SMA', params, float(SMA_MIN), float(SMA_MAX)))
+            logger.debug(f"SMA enabled: period={params['period']}")
+        except ValueError as e:
+             logger.error(f"Invalid SMA configuration: {e}. Check .env. SMA skipped.")
         except Exception as e:
-             logger.error(f"SMA config error: {e}. Skipped.")
+            logger.error(f"Unexpected error configuring SMA: {e}. SMA skipped.")
 
     if EMA_INDICATOR:
         try:
             params = {'period': int(EMA_PERIOD)}
             indicators_config.append(('EMA', params, float(EMA_MIN), float(EMA_MAX)))
+            logger.debug(f"EMA enabled: period={params['period']}")
+        except ValueError as e:
+            logger.error(f"Invalid EMA configuration: {e}. Check .env. EMA skipped.")
         except Exception as e:
-            logger.error(f"EMA config error: {e}. Skipped.")
+            logger.error(f"Unexpected error configuring EMA: {e}. EMA skipped.")
 
     if ATR_INDICATOR:
         try:
             params = {'period': int(ATR_PERIOD)}
             indicators_config.append(('ATR', params, float(ATR_MIN), float(ATR_MAX)))
+            logger.debug(f"ATR enabled: period={params['period']}")
+        except ValueError as e:
+            logger.error(f"Invalid ATR configuration: {e}. Check .env. ATR skipped.")
         except Exception as e:
-            logger.error(f"ATR config error: {e}. Skipped.")
+            logger.error(f"Unexpected error configuring ATR: {e}. ATR skipped.")
 
     if not indicators_config:
-        logger.warning("No indicators enabled or configured. Skipping calculation.")
+        logger.warning("No indicators enabled or configured correctly. No indicators calculated.")
         return {asset: {} for asset in assets}
 
     results = {asset: {} for asset in assets}
-    logger.debug(f"Calculating {len(indicators_config)} indicators for {len(assets)} assets ({timeframe}s).")
+    logger.debug(f"Calculating {len(indicators_config)} indicators for {len(assets)} assets with timeframe {timeframe}s...")
 
     max_period = 0
     for _, params, _, _ in indicators_config:
         period = params.get('period', 0)
         max_period = max(max_period, period)
+    history_size = max(3600, timeframe * (max_period + 50))
 
-    # Request history for double the max period duration, min 1 hour.
-    requested_history_seconds = max(max_period * 2 * timeframe, 3600)
+    logger.debug(f"Fetching candle history (size: {history_size}s) for indicator calculation.")
 
     for asset in assets:
         try:
-            # Fetch candles with the specified timeframe and history size
-            candles = await client.get_candles(asset, time.time(), requested_history_seconds, timeframe)
+            candles = await client.get_candles(asset, time.time(), history_size, timeframe) # Use time.time()
 
             if not candles:
-                logger.warning(f"No candle data for {asset} ({timeframe}s, {requested_history_seconds}s history). Indicators skipped.")
+                logger.warning(f"No candle data available for {asset} (timeframe {timeframe}s, history {history_size}s). Cannot calculate indicators.")
                 continue
 
-            logger.debug(f"Calculating indicators for {asset} ({len(candles)} candles) ({timeframe}s)...")
+            prices = [float(candle["close"]) for candle in candles]
+            highs = [float(candle["high"]) for candle in candles]
+            lows = [float(candle["low"]) for candle in candles]
+
+            logger.debug(f"Calculating indicators for asset {asset} ({len(candles)} candles)...")
 
             for indicator_name, params, min_val_filter, max_val_filter in indicators_config:
                 try:
-                    # Calculate indicator using the specified timeframe
                     indicator_result = await client.calculate_indicator(
                         asset=asset,
                         indicator=indicator_name,
                         params=params,
-                        history_size=requested_history_seconds, # Passing for consistency
-                        timeframe=timeframe # Use provided timeframe
+                        history_size=history_size,
+                        timeframe=timeframe
                     )
 
                     if 'error' in indicator_result:
@@ -90,26 +103,27 @@ async def calculate_indicators(client: Quotex, assets: list, timeframe: int) -> 
                     else:
                         value = indicator_result.get('current')
                         if value is None:
-                             value_list = indicator_result.get('value')
-                             if isinstance(value_list, list) and value_list:
-                                 value = value_list[-1]
+                            value_list = indicator_result.get('value')
+                            if isinstance(value_list, list) and value_list:
+                                value = value_list[-1]
 
                         if value is not None and isinstance(value, (int, float)):
                              if min_val_filter <= value <= max_val_filter:
                                  results[asset][indicator_name] = value
-                                 logger.debug(f"{indicator_name} for {asset}: {value:.5f} (within filter)")
+                                 logger.debug(f"Calculated {indicator_name} for {asset}: {value:.5f} (within filter)")
                              else:
-                                 logger.debug(f"{indicator_name} for {asset}: {value:.5f} (outside filter). Filtered.")
+                                 logger.debug(f"Calculated {indicator_name} for {asset}: {value:.5f} (outside filter). Filtered out.")
                                  results[asset][indicator_name] = None
                         else:
                              logger.debug(f"No valid numeric value for {indicator_name} on {asset}. Value set to None.")
+                             results[asset][indicator_name] = None
 
                 except Exception as e:
                     logger.error(f"Error calculating {indicator_name} for {asset}: {e}", exc_info=True)
                     results[asset][indicator_name] = None
 
         except Exception as e:
-             logger.error(f"Error fetching candles or processing for {asset}: {e}", exc_info=True)
+             logger.error(f"Error fetching candles or processing data for {asset}: {e}", exc_info=True)
 
-    logger.debug("Indicator calculation completed.")
+    logger.debug("Indicator calculation process completed.")
     return results

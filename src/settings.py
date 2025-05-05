@@ -1,84 +1,51 @@
 from pathlib import Path
 from dotenv import load_dotenv
 import os
-import logging
-
-logger = logging.getLogger(__name__)
 
 load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env")
 
 EMAIL = os.getenv("EMAIL")
 PASSWORD = os.getenv("PASSWORD")
 IS_DEMO = os.getenv("IS_DEMO", "true").lower() in ("1", "true", "yes")
-TIMEFRAME_STR = os.getenv("TIMEFRAME", "1M").upper()
+TIMEFRAME = os.getenv("TIMEFRAME", "1M").upper()  # Default to 1M
+MIN_PAYOUT = float(os.getenv("MIN_PAYOUT", "0"))  # Default to 0 (no filtering)
+ASSETS = os.getenv("ASSETS", "").split(",") if os.getenv("ASSETS") else []  # Default to empty list
+SORT_BY = os.getenv("SORT_BY", "payout").lower()  # Default to payout
+SORT_ORDER = os.getenv("SORT_ORDER", "desc").lower()  # Default to descending
 
-def parse_timeframe(timeframe_str: str) -> int:
-    """Converts timeframe string (e.g., '1M', '5M') to seconds."""
-    try:
-        if timeframe_str.endswith('S'):
-            return int(timeframe_str[:-1])
-        elif timeframe_str.endswith('M'):
-            return int(timeframe_str[:-1]) * 60
-        elif timeframe_str.endswith('H'):
-            return int(timeframe_str[:-1]) * 3600
-        elif timeframe_str.endswith('D'):
-            return int(timeframe_str[:-1]) * 86400
-        else:
-            logger.warning(f"Unknown TIMEFRAME format: {timeframe_str}. Using 60 seconds.")
-            return 60
-    except ValueError:
-        logger.warning(f"Invalid number in TIMEFRAME: {timeframe_str}. Using 60 seconds.")
-        return 60
-    except Exception as e:
-        logger.warning(f"Error parsing TIMEFRAME {timeframe_str}: {e}. Using 60 seconds.")
-        return 60
+# RSI Configuration
+RSI_INDICATOR = os.getenv("RSI_INDICATOR", "true").lower() in ("true", "yes", "1")  # Enable RSI by default
+RSI_PERIOD = int(os.getenv("RSI_PERIOD", "14"))  # Default: period=14
+RSI_MIN = float(os.getenv("RSI_MIN", "-inf"))    # Default: no minimum filter
+RSI_MAX = float(os.getenv("RSI_MAX", "inf"))     # Default: no maximum filter
+RSI_BUY_THRESHOLD = float(os.getenv("RSI_BUY_THRESHOLD", "35"))  # Buy if RSI < 35
+RSI_SELL_THRESHOLD = float(os.getenv("RSI_SELL_THRESHOLD", "65"))  # Sell if RSI > 65
 
-TIMEFRAME_SECONDS = parse_timeframe(TIMEFRAME_STR)
+# SMA Configuration
+SMA_INDICATOR = os.getenv("SMA_INDICATOR", "true").lower() in ("true", "yes", "1")  # Enable SMA for trend confirmation
+SMA_PERIOD = int(os.getenv("SMA_PERIOD", "20"))  # Default: period=20
+SMA_MIN = float(os.getenv("SMA_MIN", "-inf"))    # Default: no minimum filter
+SMA_MAX = float(os.getenv("SMA_MAX", "inf"))     # Default: no maximum filter
 
-MIN_PAYOUT = float(os.getenv("MIN_PAYOUT", "0"))
-ASSETS = [asset.strip() for asset in os.getenv("ASSETS", "").split(",") if asset.strip()] if os.getenv("ASSETS") else []
-SORT_BY = os.getenv("SORT_BY", "payout").lower()
-SORT_ORDER = os.getenv("SORT_ORDER", "desc").lower()
+# EMA Configuration
+EMA_INDICATOR = os.getenv("EMA_INDICATOR", "false").lower() in ("true", "yes", "1")  # Disabled by default
+EMA_PERIOD = int(os.getenv("EMA_PERIOD", "20"))  # Default: period=20
+EMA_MIN = float(os.getenv("EMA_MIN", "-inf"))    # Default: no minimum filter
+EMA_MAX = float(os.getenv("EMA_MAX", "inf"))     # Default: no maximum filter
 
-# RSI
-RSI_INDICATOR = os.getenv("RSI_INDICATOR", "true").lower() in ("true", "yes", "1")
-RSI_PERIOD = int(os.getenv("RSI_PERIOD", "14"))
-RSI_MIN = float(os.getenv("RSI_MIN", "-inf"))
-RSI_MAX = float(os.getenv("RSI_MAX", "inf"))
-RSI_BUY_THRESHOLD = float(os.getenv("RSI_BUY_THRESHOLD", "35"))
-RSI_SELL_THRESHOLD = float(os.getenv("RSI_SELL_THRESHOLD", "65"))
+# ATR Configuration
+ATR_INDICATOR = os.getenv("ATR_INDICATOR", "true").lower() in ("true", "yes", "1")  # Enable ATR for volatility check
+ATR_PERIOD = int(os.getenv("ATR_PERIOD", "14"))  # Default: period=14
+ATR_MIN = float(os.getenv("ATR_MIN", "-inf"))    # Default: no minimum filter
+ATR_MAX = float(os.getenv("ATR_MAX", "0.05"))    # Default: max ATR for sell orders
 
-# SMA
-SMA_INDICATOR = os.getenv("SMA_INDICATOR", "true").lower() in ("true", "yes", "1")
-SMA_PERIOD = int(os.getenv("SMA_PERIOD", "20"))
-SMA_MIN = float(os.getenv("SMA_MIN", "-inf"))
-SMA_MAX = float(os.getenv("SMA_MAX", "inf"))
-
-# EMA
-EMA_INDICATOR = os.getenv("EMA_INDICATOR", "false").lower() in ("true", "yes", "1")
-EMA_PERIOD = int(os.getenv("EMA_PERIOD", "20"))
-EMA_MIN = float(os.getenv("EMA_MIN", "-inf"))
-EMA_MAX = float(os.getenv("EMA_MAX", "inf"))
-
-# ATR
-ATR_INDICATOR = os.getenv("ATR_INDICATOR", "true").lower() in ("true", "yes", "1")
-ATR_PERIOD = int(os.getenv("ATR_PERIOD", "14"))
-ATR_MIN = float(os.getenv("ATR_MIN", "-inf"))
-ATR_MAX = float(os.getenv("ATR_MAX", "0.05"))
-
-# Trading
-TRADE_ENABLED = os.getenv("TRADE_ENABLED", "false").lower() in ("true", "yes", "1")
-TRADE_PERCENTAGE = float(os.getenv("TRADE_PERCENTAGE", "5"))
-TRADE_PERCENTAGE_MIN = float(os.getenv("TRADE_PERCENTAGE_MIN", "2"))
-TRADE_PERCENTAGE_MAX = float(os.getenv("TRADE_PERCENTAGE_MAX", "5"))
-TRADE_DURATION = int(os.getenv("TRADE_DURATION", "120"))
-TRADE_COOLDOWN = int(os.getenv("TRADE_COOLDOWN", "300"))
-DAILY_LOSS_LIMIT = float(os.getenv("DAILY_LOSS_LIMIT", "10"))
-
-# Settings for dynamic trade percentage adjustment
-CONSECUTIVE_LOSSES_THRESHOLD = int(os.getenv("CONSECUTIVE_LOSSES_THRESHOLD", "2"))
-CONSECUTIVE_WINS_THRESHOLD = int(os.getenv("CONSECUTIVE_WINS_THRESHOLD", "2"))
-TRADE_PERCENTAGE_STEP = float(os.getenv("TRADE_PERCENTAGE_STEP", "0.5")) 
-
-TRADE_MAX_AMOUNT = float(os.getenv("TRADE_MAX_AMOUNT", "5000.0"))
-ORDER_PLACEMENT_DELAY = int(os.getenv("ORDER_PLACEMENT_DELAY", "2"))
+# Trading Configuration
+TRADE_ENABLED = os.getenv("TRADE_ENABLED", "false").lower() in ("true", "yes", "1")  # Disable trading by default
+TRADE_PERCENTAGE = float(os.getenv("TRADE_PERCENTAGE", "5"))  # Default: 5% of the balance per trade
+TRADE_PERCENTAGE_MIN = float(os.getenv("TRADE_PERCENTAGE_MIN", "2"))  # Min: 2% after losses
+TRADE_PERCENTAGE_MAX = float(os.getenv("TRADE_PERCENTAGE_MAX", "5"))  # Max: 5% after wins
+TRADE_DURATION = int(os.getenv("TRADE_DURATION", "120"))  # Default: 120 seconds
+TRADE_COOLDOWN = int(os.getenv("TRADE_COOLDOWN", "300"))  # Default: 5 minutes (300 seconds) cooldown per asset
+DAILY_LOSS_LIMIT = float(os.getenv("DAILY_LOSS_LIMIT", "10"))  # Default: 10% daily loss limit
+CONSECUTIVE_LOSSES_THRESHOLD = int(os.getenv("CONSECUTIVE_LOSSES_THRESHOLD", "2"))  # Reduce risk after 2 consecutive losses
+CONSECUTIVE_WINS_THRESHOLD = int(os.getenv("CONSECUTIVE_WINS_THRESHOLD", "2"))  # Increase risk after 2 consecutive wins
